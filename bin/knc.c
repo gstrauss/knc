@@ -25,6 +25,7 @@
 
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -197,7 +198,7 @@ sig_set(int signum, void (*f)(int), int cldstop)
 	sigemptyset(&sigset);
 	sa.sa_handler = f;
 	sa.sa_mask = sigset;
-	sa.sa_flags = cldstop ? SA_NOCLDSTOP : 0;
+	sa.sa_flags = SA_RESTART | (cldstop ? SA_NOCLDSTOP : 0);
 	if (sigaction(signum, &sa, NULL) < 0)
 		LOG_ERRNO(LOG_WARNING, ("failed to %s %s (%d)", err, sig,
 		    signum));
@@ -1816,6 +1817,12 @@ do_listener(int listener, int argc, char **argv)
 	time_t			 endtime = 0;
 	socklen_t		 client_len;
 	work_t			*work;
+	struct pollfd pfds[1];
+	pfds[0].fd = listener;
+	pfds[0].events = POLLIN;
+	pfds[0].revents = 0;
+
+	nonblocking_set(listener);
 
 	sig_set(SIGHUP, sig_handler, 1);
 	sig_set(SIGCHLD, sig_handler, 1);
@@ -1841,6 +1848,11 @@ do_listener(int listener, int argc, char **argv)
 
 		/* Reap any children who've died */
 		num_children -= reap();
+
+		/* poll() is interruptable, even by sigaction w/ SA_RESTART */
+		if (poll(pfds, 1, 60000) <= 0) { /* wake every 60s to reap() */
+			continue;
+		}
 
 		client_len = sizeof(sa);
 		if ((fd = accept(listener, (struct sockaddr *)&sa,
