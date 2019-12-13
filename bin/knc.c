@@ -747,6 +747,12 @@ handshake(work_t *work)
 	return 0;
 }
 
+/*
+ * Returns:
+ *		>0	No error (or temporary error)
+ *		0	EOF
+ *		-1	Unrecoverable error
+ */
 int
 move_network_to_local_buffer(work_t *work)
 {
@@ -770,13 +776,19 @@ move_network_to_local_buffer(work_t *work)
 		LOG(LOG_ERR, ("gstd_read error"));
 		return -1;
 	case -2:
-		return 1;
+		return 1; /* retry later (do not return <= 0) */
 	}
 
 	work->local_buffer.in_valid = 1;
 	return work->local_buffer.in_len;
 }
 
+/*
+ * Returns:
+ *		>0	No error (or temporary error)
+ *		0	EOF
+ *		-1	Unrecoverable error
+ */
 int
 move_local_to_network_buffer(work_t *work)
 {
@@ -795,6 +807,8 @@ move_local_to_network_buffer(work_t *work)
 		/* EOF */
 		return 0;
 	} else if (work->network_buffer.in_len < 0) {
+		if (errno == EINTR || errno == EAGAIN)
+			return 1; /* retry later (do not return <= 0) */
 		if (errno == ECONNRESET)
 			return 0; /* Treat as EOF */
 
@@ -808,9 +822,9 @@ move_local_to_network_buffer(work_t *work)
 
 /*
  * Returns:
- *		1	Buffer completely transmitted
- *		0	Buffer partially transmitted, please call again
- *		-1	Unrecoverable error
+ *		>0	No error (or temporary error)
+ *		0	Unrecoverable error (EPIPE)
+ *		-1	Unrecoverable error (other)
  */
 int
 write_local_buffer(work_t *work)
@@ -846,7 +860,9 @@ write_local_buffer(work_t *work)
 		    &(work->local_buffer.out[work->local_buffer.out_pos]),
 		    work->local_buffer.out_len);
 
-	if (len < 0 && ((errno != EINTR) && (errno != EAGAIN))) {
+	if (len < 0) {
+		if (errno == EINTR || errno == EAGAIN)
+			return 1; /* retry later (do not return <= 0) */
 		if (errno == EPIPE) {
 			/*
 			 * It's possible that exec'd programs (or the
@@ -891,9 +907,9 @@ write_local_buffer(work_t *work)
 
 /*
  * Returns:
- *		1	Buffer completely transmitted
- *		0	Buffer partially transmitted, please call again
- *		-1	Unrecoverable error
+ *		>0	No error (or temporary error)
+ *		0	Unrecoverable error (EPIPE)
+ *		-1	Unrecoverable error (other)
  */
 int
 write_network_buffer(work_t *work)
@@ -955,7 +971,9 @@ write_network_buffer(work_t *work)
 		    &(work->network_buffer.out[work->network_buffer.out_pos]),
 		    work->network_buffer.out_len);
 
-	if (len < 0 && ((errno != EINTR) && (errno != EAGAIN))) {
+	if (len < 0) {
+		if (errno == EINTR || errno == EAGAIN)
+			return 1; /* retry later (do not return <= 0) */
 		if (errno == EPIPE) {
 			/*
 			 * It's possible that exec'd programs (or the
@@ -1149,9 +1167,11 @@ move_data(work_t *work)
 				mret = read(work->local_err, errbuf,
 					    sizeof(errbuf) - 1);
 				switch (mret) {
-				case 0:
-					/*FALLTHROUGH*/
 				case -1:
+					if (errno == EINTR || errno == EAGAIN)
+						break;
+					/*FALLTHROUGH*/
+				case 0:
 					/* just close it on errors or EOF. */
 					close(work->local_err);
 					work->local_err = -1;
