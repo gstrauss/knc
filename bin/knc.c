@@ -1179,12 +1179,12 @@ move_data(work_t *work)
 					LOG(LOG_DEBUG, ("EOF on network side."
 						        " Queueing shutdown"));
 
-					shut_nread_lwrite = 1;
+					shut_nread_lwrite |= 1;
 
 					network_active = 0;
 
 					if (prefs.no_half_close) {
-						shut_nwrite_lread = 1;
+						shut_nwrite_lread |= 1;
 						local_active = 0;
 					}
 				} else if (mret < 0)
@@ -1199,12 +1199,12 @@ move_data(work_t *work)
 						        "read. Queueing "
 						        "shutdown"));
 
-					shut_nwrite_lread = 1;
+					shut_nwrite_lread |= 1;
 
 					local_active = 0;
 
 					if (prefs.no_half_close) {
-						shut_nread_lwrite = 1;
+						shut_nread_lwrite |= 1;
 						network_active = 0;
 					}
 				} else if (mret < 0)
@@ -1228,7 +1228,7 @@ move_data(work_t *work)
 					LOG(LOG_DEBUG, ("EPIPE on network-side "
 						        "write. Queueing "
 						        "shutdown"));
-					shut_nwrite_lread = 1;
+					shut_nwrite_lread |= 1;
 				}
 			}
 
@@ -1248,7 +1248,7 @@ move_data(work_t *work)
 					LOG(LOG_DEBUG, ("EPIPE on local-side "
 						        "write. Queueing "
 						        "shutdown"));
-					shut_nread_lwrite = 1;
+					shut_nread_lwrite |= 1;
 				}
 			}
 		} else if (ret == 0) {
