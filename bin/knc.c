@@ -23,10 +23,17 @@
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+/*(for definition of POLLRDHUP)*/
+#ifndef _DEFAULT_SOURCE
+#define _DEFAULT_SOURCE
+#endif
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/poll.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -49,6 +56,10 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifndef POLLRDHUP
+#define POLLRDHUP 0
+#endif
 
 #include "config.h"
 #include "gssstdio.h"
@@ -96,7 +107,6 @@ void	write_local_err(work_t *);
 int	move_data(work_t *);
 void	work_init(work_t *);
 void	work_free(work_t *);
-int	shutdown_or_close(int, int);
 int	so_keepalive_set(int);
 int	tcp_nodelay_set(int);
 int	nonblocking_set(int);
@@ -250,17 +260,6 @@ getport(const char *servnam, const char *proto)
 
 	port = atoi(servnam);
 	return htons(port);
-}
-
-int
-shutdown_or_close(int fd, int how)
-{
-	int ret;
-
-	if ((ret = shutdown(fd, how)) == -1)
-		return close(fd);
-
-	return ret;
 }
 
 int
@@ -1093,38 +1092,37 @@ write_local_err(work_t *work)
 	} while (rd == sizeof(errbuf)-1 && total < 65536);
 }
 
-#define MAX(a,b)	(((a) > (b)) ? (a) : (b))
-
 int
 move_data(work_t *work)
 {
+	struct pollfd pfds[4];
+	nfds_t nfds;
+	struct pollfd * const pfd_net = pfds+0;
+	struct pollfd * const pfd_in  = pfds+1;
+	struct pollfd * const pfd_out = pfds+2;
+	struct pollfd * const pfd_err = pfds+3;
 	int		ret;
 	int		mret;
-	int		select_is_the_worst_api_ever;
-	fd_set		rdset;
-	fd_set		wrset;
+	int		timeout;
 	char		local_active = 1;
 	char		network_active = 1;
 	char		shut_nread_lwrite = 0;
 	char		shut_nwrite_lread = 0;
-	struct timeval	tv;
+	char		pollrdhup_net = 0;
+	char		pollrdhup_in = 0;
+
+	memset(pfds, 0, sizeof(pfds));
+	pfd_net->fd = work->network_fd;
+	pfd_in->fd  = work->local_in;
+	pfd_out->fd = work->local_out;
+	pfd_err->fd = work->local_err;
+	nfds = (work->local_err == -1) ? 3 : 4;
 
 	work->local_buffer.in_valid = 0;
 	work->local_buffer.out_valid = 0;
 
 	work->network_buffer.out_valid = 0;
 	work->network_buffer.in_valid = 0;
-
-	if (work->local_err != -1) {
-		select_is_the_worst_api_ever =
-		    MAX(work->network_fd,
-			MAX(work->local_err, MAX(work->local_in,
-						 work->local_out)));
-	} else {
-		select_is_the_worst_api_ever =
-		    MAX(work->network_fd,
-			MAX(work->local_in, work->local_out));
-	}
 
 	nonblocking_set(work->network_fd);
 	nonblocking_set(work->local_in);
@@ -1136,8 +1134,24 @@ move_data(work_t *work)
 		    !work->local_buffer.out_valid) {
 			LOG(LOG_DEBUG, ("Calling shutdown on network side "
 					"read and local side write."));
-			shutdown_or_close(work->network_fd, SHUT_RD);
-			shutdown_or_close(work->local_out, SHUT_WR);
+			if (work->network_fd >= 0
+			    && shutdown(work->network_fd, SHUT_RD) != 0) {
+				close(work->network_fd);
+				work->network_fd = -1;
+				pfd_net->fd = -1;
+				network_active = 0;
+			}
+			if (work->local_out >= 0
+			    && shutdown(work->local_out, SHUT_WR) != 0) {
+				close(work->local_out);
+				if (work->local_in == work->local_out) {
+					work->local_in = -1;
+					pfd_in->fd = -1;
+				}
+				work->local_out = -1;
+				pfd_out->fd = -1;
+				local_active = 0;
+			}
 			++shut_nread_lwrite;
 		}
 
@@ -1146,47 +1160,71 @@ move_data(work_t *work)
 		    !work->network_buffer.out_valid) {
 			LOG(LOG_DEBUG, ("Calling shutdown on network side "
 				       "write and local side read"));
-			shutdown_or_close(work->network_fd, SHUT_WR);
-			shutdown_or_close(work->local_in, SHUT_RD);
+			if (work->network_fd >= 0
+			    && shutdown(work->network_fd, SHUT_WR) != 0) {
+				close(work->network_fd);
+				work->network_fd = -1;
+				pfd_net->fd = -1;
+				network_active = 0;
+			}
+			if (work->local_in >= 0
+			    && shutdown(work->local_in, SHUT_RD) != 0) {
+				close(work->local_in);
+				if (work->local_in == work->local_out) {
+					work->local_out = -1;
+					pfd_out->fd = -1;
+				}
+				work->local_in = -1;
+				pfd_in->fd = -1;
+				local_active = 0;
+			}
 			++shut_nwrite_lread;
 		}
 
-		FD_ZERO(&rdset);
-		FD_ZERO(&wrset);
-
-		/* Add stderr */
-		if (work->local_err != -1)
-			FD_SET(work->local_err, &rdset);
+		pfd_net->events = network_active ? POLLRDHUP : 0;
+		pfd_in->events  = local_active   ? POLLRDHUP : 0;
+		pfd_out->events = 0;
+		pfd_err->events = POLLRDHUP;
 
 		/*
 		 * We have this timeout only to allow us to recover
 		 * from children which prematurely exit
 		 */
-		tv.tv_sec = 30;
-		tv.tv_usec = 0;
+		timeout = POLLRDHUP ? -1 : 30000; /* milliseconds */
+
+		ret = 0; /* flag if poll events are set */
 
 		/* Read Side */
 		if (network_active && !work->local_buffer.in_valid) {
-			FD_SET(work->network_fd, &rdset);
+			pfd_net->events |= POLLIN;
+			ret |= 1;
 		}
 
 		if (local_active && !work->network_buffer.in_valid) {
-			FD_SET(work->local_in, &rdset);
+			pfd_in->events |= POLLIN;
+			ret |= 1;
 		}
 
 		/* Write Side */
 		if (work->local_buffer.in_valid ||
 		    work->local_buffer.out_valid) {
-			FD_SET(work->local_out, &wrset);
+			pfd_out->events |= POLLOUT;
+			ret |= 1;
 		}
 
 		if (work->network_buffer.in_valid ||
 		    work->network_buffer.out_valid) {
-			FD_SET(work->network_fd, &wrset);
+			pfd_net->events |= POLLOUT;
+			ret |= 1;
 		}
 
-		ret = select(select_is_the_worst_api_ever + 1,
-			     &rdset, &wrset, NULL, &tv);
+		if (ret == 0) {
+			/* done; not waiting for any poll events */
+			/* sockets closed; discard any unflushed data */
+			break;
+		}
+
+		ret = poll(pfds, nfds, timeout);
 
 		/*
 		 * As we read from the local and network sides of the
@@ -1196,9 +1234,8 @@ move_data(work_t *work)
 		 * we must cause one to appear on the reading side of our
 		 * subordinate.  We use shutdown() to accomplish this.
 		 * In particular, since some of our connections may be
-		 * file-based descriptors, we use shutdown_or_close() which
-		 * first attempts a half-close, and if that fails, tries
-		 * a full close.
+		 * file-based descriptors, we first attempt a half-close,
+		 * and if that fails, try a full close.
 		 *
 		 * Additionally, we must continue to shuffle data from the
 		 * remaining side, until it too disappears (and we pass that
@@ -1223,14 +1260,22 @@ move_data(work_t *work)
 		/* At least one descriptor ready for reading... */
 		if (ret > 0) {
 			/* Something happened on stderr, better log it */
-			if ((work->local_err != -1) &&
-			    FD_ISSET(work->local_err, &rdset)) {
+			if (pfd_err->revents) {
 				write_local_err(work);
+				if (work->local_err == -1) {
+					pfd_err->revents = 0;
+					--nfds;/* pfd_err last in pfds[] list */
+				}
 			}
 
+			pollrdhup_net |= (pfd_net->revents&(POLLRDHUP|POLLHUP));
+			pollrdhup_in  |= (pfd_in->revents &(POLLRDHUP|POLLHUP));
+
 			/* The network has something to say */
-			if (FD_ISSET(work->network_fd, &rdset)) {
-				mret = move_network_to_local_buffer(work);
+			mret = (pfd_net->revents & POLLIN)
+			  ? move_network_to_local_buffer(work)
+			  : !(pollrdhup_net && !work->local_buffer.in_valid);
+			if (mret <= 0) {
 				if (mret == 0) {
 					LOG(LOG_DEBUG, ("EOF on network side."
 						        " Queueing shutdown"));
@@ -1248,8 +1293,10 @@ move_data(work_t *work)
 			}
 
 			/* Our local side has something to say */
-			if (FD_ISSET(work->local_in, &rdset)) {
-				mret = move_local_to_network_buffer(work);
+			mret = (pfd_in->revents & POLLIN)
+			  ? move_local_to_network_buffer(work)
+			  : !(pollrdhup_in && !work->network_buffer.in_valid);
+			if (mret <= 0) {
 				if (mret == 0) {
 					LOG(LOG_DEBUG, ("EOF on local-side "
 						        "read. Queueing "
@@ -1272,7 +1319,7 @@ move_data(work_t *work)
 			 * listening.
 			 */
 
-			if (FD_ISSET(work->network_fd, &wrset) &&
+			if ((pfd_net->revents & (POLLOUT|POLLERR)) &&
 			    (work->network_buffer.out_valid ||
 			     work->network_buffer.in_valid)) {
 				mret = write_network_buffer(work);
@@ -1286,13 +1333,19 @@ move_data(work_t *work)
 						        "shutdown"));
 					shut_nwrite_lread |= 1;
 				}
+			} else if (pfd_net->revents & POLLERR) {
+				LOG(LOG_DEBUG, ("POLLERR on network-side write."
+					        " Queueing shutdown"));
+				work->network_buffer.in_valid = 0;
+				work->network_buffer.out_valid = 0;
+				shut_nwrite_lread |= 1;
 			}
 
 			/*
 			 * We have something to say to the local side and it's
 			 * listening.
 			 */
-			if (FD_ISSET(work->local_out, &wrset) &&
+			if ((pfd_out->revents & (POLLOUT|POLLERR)) &&
 			    (work->local_buffer.out_valid ||
 			     work->local_buffer.in_valid)) {
 				mret = write_local_buffer(work);
@@ -1306,13 +1359,19 @@ move_data(work_t *work)
 						        "shutdown"));
 					shut_nread_lwrite |= 1;
 				}
+			} else if (pfd_out->revents & POLLERR) {
+				LOG(LOG_DEBUG, ("POLLERR on local-side write."
+					        " Queueing shutdown"));
+				work->local_buffer.in_valid = 0;
+				work->local_buffer.out_valid = 0;
+				shut_nread_lwrite |= 1;
 			}
 		} else if (ret == 0) {
 			/* NOP */
 		} else {
 			/* ret < 0 */
-			if ((errno != EINTR) && (errno != EAGAIN)) {
-				LOG_ERRNO(LOG_ERR, ("select failure"));
+			if (errno != EINTR) {
+				LOG_ERRNO(LOG_ERR, ("poll failure"));
 				return 0;
 			}
 		}
