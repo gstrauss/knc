@@ -375,11 +375,13 @@ The astute reader will point out that
 .Em [A,E]
 is not a socket in the general case, and that
 .Xr shutdown 2
-fails on non-sockets.  This is why
+fails on non-sockets.
 .Nm
-.Em actually
-invokes an internal routine
-.Fn shutdown_or_close
+invokes
+.Xr close 2
+if
+.Xr shutdown 2
+fails,
 which handles the non-socket case appropriately.
 .Sh EXAMPLE
 A simple loopback test can be performed by invoking the server as:
