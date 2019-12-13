@@ -170,7 +170,7 @@ sig_set(int signum, void (*f)(int), int cldstop)
 	sigemptyset(&sigset);
 	sa.sa_handler = f;
 	sa.sa_mask = sigset;
-	sa.sa_flags = cldstop ? SA_NOCLDSTOP : 0;
+	sa.sa_flags = SA_RESTART | (cldstop ? SA_NOCLDSTOP : 0);
 	if (sigaction(signum, &sa, NULL) < 0)
 		LOG_ERRNO(LOG_WARNING, ("failed to %s %s (%d)", err, sig,
 		    signum));
@@ -1010,7 +1010,6 @@ move_data(work_t *work)
 	struct pollfd * const pfd_err = pfds+3;
 	int		ret;
 	int		mret;
-	int		timeout;
 	char		local_active = 1;
 	char		network_active = 1;
 	char		shut_nread_lwrite = 0;
@@ -1061,6 +1060,7 @@ move_data(work_t *work)
 				local_active = 0;
 			}
 			++shut_nread_lwrite;
+			reap();
 		}
 
 		if ((shut_nwrite_lread == 1) &&
@@ -1087,32 +1087,13 @@ move_data(work_t *work)
 				local_active = 0;
 			}
 			++shut_nwrite_lread;
+			reap();
 		}
-
-		/*
-		 * Now here we may have received SIGCHLD.
-		 * (it's possible we have no child, of course,
-		 * but then what would we be doing here?)
-		 *
-		 * Once we've drained any communication coming *from*
-		 * the child (local_active == 0 *and*
-		 * work->network_buffer.out_valid == 0), then
-		 * those facts, in combination with with a dead child
-		 * means we should exit.
-		 */
-		if (reap() > 0)
-			LOG(LOG_NOTICE, ("child died before EOF"));
 
 		pfd_net->events = POLLRDHUP;
 		pfd_in->events  = POLLRDHUP;
 		pfd_out->events = 0;
 		pfd_err->events = POLLRDHUP;
-
-		/*
-		 * We have this timeout only to allow us to recover
-		 * from children which prematurely exit
-		 */
-		timeout = POLLRDHUP ? -1 : 30000; /* milliseconds */
 
 		ret = 0; /* flag if poll events are set */
 
@@ -1146,7 +1127,7 @@ move_data(work_t *work)
 			break;
 		}
 
-		ret = poll(pfds, nfds, timeout);
+		ret = poll(pfds, nfds, -1); /* -1 == INFTIM */
 
 		/*
 		 * As we read from the local and network sides of the
@@ -1236,6 +1217,7 @@ move_data(work_t *work)
 						        "shutdown"));
 
 					shut_nwrite_lread = 1;
+					reap();
 
 					local_active = 0;
 
@@ -1812,6 +1794,12 @@ do_listener(int listener, int argc, char **argv)
 	time_t			 endtime = 0;
 	socklen_t		 client_len;
 	work_t			*work;
+	struct pollfd pfds[1];
+	pfds[0].fd = listener;
+	pfds[0].events = POLLIN;
+	pfds[0].revents = 0;
+
+	nonblocking_set(listener);
 
 	sig_set(SIGHUP, sig_handler, 1);
 	sig_set(SIGCHLD, sig_handler, 1);
@@ -1833,6 +1821,11 @@ do_listener(int listener, int argc, char **argv)
 
 		/* Reap any children who've died */
 		num_children -= reap();
+
+		/* poll() is interruptable, even by sigaction w/ SA_RESTART */
+		if (poll(pfds, 1, -1) <= 0) {
+			continue;
+		}
 
 		if ((work = (work_t *)malloc(sizeof(work_t))) == NULL) {
 			LOG(LOG_CRIT, ("malloc of work structure failed"));
