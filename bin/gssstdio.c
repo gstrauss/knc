@@ -472,7 +472,9 @@ read_packet(int fd, gss_buffer_t buf, int timeout, int first)
 		    timeout);
 
 		if (ret == -1) {
-			if (errno == EINTR || errno == EAGAIN)
+			if (   errno == EINTR
+			    || errno == EAGAIN
+			    || errno == EWOULDBLOCK)
 				return -2;
 
 			LOG(LOG_ERR, ("%s", strerror(errno)));
@@ -522,7 +524,7 @@ read_packet(int fd, gss_buffer_t buf, int timeout, int first)
 	ret = timed_read(fd, tmpbuf + tmpbuf_pos, len - tmpbuf_pos, timeout);
 	if (ret == -1) {
 
-		if (errno == EINTR || errno == EAGAIN)
+		if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
 			return -2;
 
 		LOG(LOG_ERR, ("%s", strerror(errno)));
