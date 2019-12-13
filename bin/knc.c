@@ -795,7 +795,7 @@ move_local_to_network_buffer(work_t *work)
 		/* EOF */
 		return 0;
 	} else if (work->network_buffer.in_len < 0) {
-		if (errno == EINTR || errno == EAGAIN)
+		if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
 			return 1; /* retry later (do not return <= 0) */
 		if (errno == ECONNRESET)
 			return 0; /* Treat as EOF */
@@ -849,7 +849,7 @@ write_local_buffer(work_t *work)
 		    work->local_buffer.out_len);
 
 	if (len < 0) {
-		if (errno == EINTR || errno == EAGAIN)
+		if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
 			return 1; /* retry later (do not return <= 0) */
 		if (errno == EPIPE) {
 			/*
@@ -960,7 +960,7 @@ write_network_buffer(work_t *work)
 		    work->network_buffer.out_len);
 
 	if (len < 0) {
-		if (errno == EINTR || errno == EAGAIN)
+		if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
 			return 1; /* retry later (do not return <= 0) */
 		if (errno == EPIPE) {
 			/*
@@ -1156,7 +1156,9 @@ move_data(work_t *work)
 					    sizeof(errbuf) - 1);
 				switch (mret) {
 				case -1:
-					if (errno == EINTR || errno == EAGAIN)
+					if (   errno == EINTR
+					    || errno == EAGAIN
+					    || errno == EWOULDBLOCK)
 						break;
 					/*FALLTHROUGH*/
 				case 0:
@@ -1793,7 +1795,9 @@ do_listener(int listener, int argc, char **argv)
 		if ((fd = accept(listener, (struct sockaddr *)&sa,
 				 &client_len)) < 0) {
 
-			if ((errno != EINTR) && (errno != EAGAIN))
+			if (   errno != EINTR
+			    && errno != EAGAIN
+			    && errno != EWOULDBLOCK)
 				LOG_ERRNO(LOG_WARNING, ("failed to accept"));
 
 			work_free(work);
