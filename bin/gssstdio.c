@@ -364,7 +364,7 @@ gstd_read(void *the_tok, char *buf, size_t length)
 	 */
 
 	length = MIN(length, tok->gstd_inbuf.length - bufpos);
-	memcpy(buf, tok->gstd_inbuf.value + bufpos, length);
+	memcpy(buf, (char *)tok->gstd_inbuf.value + bufpos, length);
 	tok->gstd_inbufpos = bufpos + length;
 	LOG(LOG_DEBUG, ("read %d bytes", length));
 	return length;
