@@ -1103,7 +1103,6 @@ move_data(work_t *work)
 	struct pollfd * const pfd_err = pfds+3;
 	int		ret;
 	int		mret;
-	int		timeout;
 	char		local_active = 1;
 	char		network_active = 1;
 	char		shut_nread_lwrite = 0;
@@ -1186,12 +1185,6 @@ move_data(work_t *work)
 		pfd_out->events = 0;
 		pfd_err->events = POLLRDHUP;
 
-		/*
-		 * We have this timeout only to allow us to recover
-		 * from children which prematurely exit
-		 */
-		timeout = POLLRDHUP ? -1 : 30000; /* milliseconds */
-
 		ret = 0; /* flag if poll events are set */
 
 		/* Read Side */
@@ -1224,7 +1217,11 @@ move_data(work_t *work)
 			break;
 		}
 
-		ret = poll(pfds, nfds, timeout);
+	      #if POLLRDHUP == 0
+		ret = poll(pfds, nfds, 5000); /* 5 sec */
+	      #else
+		ret = poll(pfds, nfds, -1); /* -1 == INFTIM */
+	      #endif
 
 		/*
 		 * As we read from the local and network sides of the
@@ -1368,6 +1365,66 @@ move_data(work_t *work)
 			}
 		} else if (ret == 0) {
 			/* NOP */
+		      #if POLLRDHUP == 0
+			/* check fd closure if prior poll did not check POLLIN*/
+			if (!shut_nread_lwrite && !(pfd_net->events & POLLIN)) {
+				struct pollfd pfd = { pfd_net->fd, POLLIN, 0 };
+				char d[1];
+				ret = poll(&pfd, 1, 0); /* poll w/ no wait */
+				if (ret < 0 && errno != EINTR) {
+					LOG_ERRNO(LOG_ERR, ("poll failure"));
+					return 0;
+				} else if (ret > 0
+					 && (pfd.revents & (POLLHUP|POLLERR))) {
+					LOG(LOG_DEBUG, ("network-side read err."
+						        " Queueing shutdown"));
+
+					shut_nread_lwrite |= 1;
+				} else if (ret > 0
+					 && recv(pfd.fd, d, 1, MSG_PEEK) == 0) {
+					LOG(LOG_DEBUG, ("EOF on network side."
+						        " Queueing shutdown"));
+
+					shut_nread_lwrite |= 1;
+
+					network_active = 0;
+
+					if (prefs.no_half_close) {
+						shut_nwrite_lread |= 1;
+						local_active = 0;
+					}
+				}
+			}
+			if (!shut_nwrite_lread && !(pfd_in->events & POLLIN)) {
+				struct pollfd pfd = { pfd_in->fd, POLLIN, 0 };
+				char d[1];
+				ret = poll(&pfd, 1, 0); /* poll w/ no wait */
+				if (ret < 0 && errno != EINTR) {
+					LOG_ERRNO(LOG_ERR, ("poll failure"));
+					return 0;
+				} else if (ret > 0
+					 && (pfd.revents & (POLLHUP|POLLERR))) {
+					LOG(LOG_DEBUG, ("local-side read err."
+						        " Queueing shutdown"));
+
+					shut_nwrite_lread |= 1;
+				} else if (ret > 0
+					 && recv(pfd.fd, d, 1, MSG_PEEK) == 0) {
+					LOG(LOG_DEBUG, ("EOF on local-side "
+						        "read. Queueing "
+						        "shutdown"));
+
+					shut_nwrite_lread |= 1;
+
+					local_active = 0;
+
+					if (prefs.no_half_close) {
+						shut_nread_lwrite |= 1;
+						network_active = 0;
+					}
+				}
+			}
+		      #endif
 		} else {
 			/* ret < 0 */
 			if (errno != EINTR) {
