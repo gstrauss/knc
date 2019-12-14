@@ -244,8 +244,7 @@ again:
 
 
 void *
-gstd_initiate(const char *hostname, const char *service, const char *princ,
-	      int fd)
+gstd_initiate(const char *hostname, const char *service, const char *princ, int fd)
 {
 	struct gstd_tok	*tok;
 	gss_ctx_id_t	ctx = GSS_C_NO_CONTEXT;
@@ -272,7 +271,7 @@ gstd_initiate(const char *hostname, const char *service, const char *princ,
 			return NULL;
 		type = GSS_C_NT_HOSTBASED_SERVICE;
 	} else {
-		name.value = (char *) princ;
+		name.value = (void *)(uintptr_t)princ;
 		name.length = strlen(princ);
 		type = (gss_OID) GSS_C_NO_OID;
 	}
