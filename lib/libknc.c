@@ -215,14 +215,14 @@ int debug = 0;
 			debug_printf x ;	\
 		}				\
 	} while (0/*CONSTCOND*/)
+
+static void	debug_printf(knc_ctx, const char *, ...)
+    __attribute__((__format__(__printf__, 2, 3)));
 #else
 #define DEBUG(x)
 #endif
 
 /* Local function declarations */
-
-static void	debug_printf(knc_ctx, const char *, ...)
-    __attribute__((__format__(__printf__, 2, 3)));
 
 static void		 destroy_stream(stream);
 static stream_bit	 get_stream_bit(stream);
