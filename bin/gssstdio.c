@@ -320,8 +320,8 @@ again:
 #undef MIN
 #endif
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
-int
-gstd_read(void *the_tok, char *buf, int length)
+ssize_t
+gstd_read(void *the_tok, char *buf, size_t length)
 {
 	struct gstd_tok	*tok = the_tok;
 	gss_buffer_desc	in;
@@ -334,7 +334,7 @@ gstd_read(void *the_tok, char *buf, int length)
 	 * reset the buffer.
 	 */
 
-	if (bufpos == -1 || bufpos >= tok->gstd_inbuf.length) {
+	if (bufpos < 0 || (size_t)bufpos >= tok->gstd_inbuf.length) {
 		if (tok->gstd_inbuf.length > 0)
 			gss_release_buffer(&min, &tok->gstd_inbuf);
 
@@ -460,7 +460,7 @@ read_packet(int fd, gss_buffer_t buf, int timeout, int first)
 	static char		len_buf[4];
 	static int		len_buf_pos = 0;
 	static char *		tmpbuf = 0;
-	static int		tmpbuf_pos = 0;
+	static uint32_t		tmpbuf_pos = 0;
 
 	if (first) {
 		len_buf_pos = 0;
@@ -566,7 +566,7 @@ write_packet(int fd, gss_buffer_t buf)
 
 	len = htonl(buf->length);
 	if ((writen(fd, &len, 4) != 4) ||
-	    (writen(fd, buf->value, buf->length) != buf->length))
+	    (writen(fd, buf->value, buf->length) != (ssize_t)buf->length))
 		ret = -1;
 
 	gss_release_buffer (&min_stat, buf);
@@ -579,11 +579,11 @@ write_packet(int fd, gss_buffer_t buf)
  * to do so for any reason, and len otherwise.  Note, partial writes may
  * have occurred if this function returns -1
  */
-int
+ssize_t
 writen(int fd, const void *buf, ssize_t len) {
-	int	nleft;
-	int	nwritten;
-	char *	buffer = (char *)buf;
+	ssize_t nleft;
+	ssize_t nwritten;
+	const char *buffer = buf;
 
 	nleft = len;
 	while (nleft > 0) {
