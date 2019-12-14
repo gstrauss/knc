@@ -71,7 +71,7 @@ struct gstd_tok {
 	int		gstd_fd;	/* file descriptor for the stream */
 };
 
-int	 gstd_read(void *, char *, int);
+ssize_t	 gstd_read(void *, char *, size_t);
 int	 gstd_close(void *);
 
 void	*gstd_accept(int, char **, char **, char **);
@@ -81,8 +81,8 @@ void	 gstd_release_context(void *);
 
 void gstd_error(int, int, const char *);
 
-int	 readn(int, void *, ssize_t);
-int	 writen(int, const void *, ssize_t);
+ssize_t	 readn(int, void *, ssize_t);
+ssize_t	 writen(int, const void *, ssize_t);
 
 #define GSTD_MAXPACKETCONTENTS	65536	/* max contents of a single payload */
 
