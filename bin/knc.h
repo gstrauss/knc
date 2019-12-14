@@ -59,11 +59,11 @@ extern prefs_t prefs;
 typedef struct write_buffer_s {
 	char			in[GSTD_MAXPACKETCONTENTS];
 	char			in_valid;
-	size_t			in_len;
+	ssize_t			in_len;
 	char			out[2 * GSTD_MAXPACKETCONTENTS + 4];
 	char			out_valid;
 	int			out_pos;
-	size_t			out_len;
+	ssize_t			out_len;
 } write_buffer_t;
 
 
