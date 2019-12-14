@@ -756,6 +756,7 @@ handshake(work_t *work)
 int
 move_network_to_local_buffer(work_t *work)
 {
+	ssize_t len;
 
 	/* We should NOT be called if we've already buffered inbound data */
 	if (work->local_buffer.in_valid) {
@@ -764,11 +765,11 @@ move_network_to_local_buffer(work_t *work)
 		return -1;
 	}
 
-	work->local_buffer.in_len = gstd_read(work->context,
-					work->local_buffer.in,
-					sizeof(work->local_buffer.in));
+	len = gstd_read(work->context,
+			work->local_buffer.in,
+			sizeof(work->local_buffer.in));
 
-	switch (work->local_buffer.in_len) {
+	switch (len) {
 	case 0:
 		/* EOF */
 		return 0;
@@ -780,7 +781,8 @@ move_network_to_local_buffer(work_t *work)
 	}
 
 	work->local_buffer.in_valid = 1;
-	return work->local_buffer.in_len;
+	work->local_buffer.in_len = (size_t)len;
+	return (int)work->local_buffer.in_len;
 }
 
 /*
@@ -792,6 +794,7 @@ move_network_to_local_buffer(work_t *work)
 int
 move_local_to_network_buffer(work_t *work)
 {
+	ssize_t len;
 
 	/* We should NOT be called if we've already buffered inbound data */
 	if (work->network_buffer.in_valid) {
@@ -800,13 +803,13 @@ move_local_to_network_buffer(work_t *work)
 		return -1;
 	}
 
-	work->network_buffer.in_len = read(work->local_in,
-					   work->network_buffer.in,
-					   sizeof(work->network_buffer.in));
-	if (work->network_buffer.in_len == 0) {
+	len = read(work->local_in,
+		   work->network_buffer.in,
+		   sizeof(work->network_buffer.in));
+	if (len == 0) {
 		/* EOF */
 		return 0;
-	} else if (work->network_buffer.in_len < 0) {
+	} else if (len < 0) {
 		if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
 			return 1; /* retry later (do not return <= 0) */
 		if (errno == ECONNRESET)
@@ -817,7 +820,8 @@ move_local_to_network_buffer(work_t *work)
 	}
 
 	work->network_buffer.in_valid = 1;
-	return work->network_buffer.in_len;
+	work->network_buffer.in_len = (size_t)len;
+	return (int)work->network_buffer.in_len;
 }
 
 /*
