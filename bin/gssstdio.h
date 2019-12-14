@@ -75,7 +75,7 @@ ssize_t	 gstd_read(void *, char *, size_t);
 int	 gstd_close(void *);
 
 void	*gstd_accept(int, char **, char **, char **);
-void	*gstd_initiate(const char *, const char *, const char *, int);
+void	*gstd_initiate(const char *, const char *, char *, int);
 
 void	 gstd_release_context(void *);
 

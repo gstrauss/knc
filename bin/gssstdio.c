@@ -244,8 +244,7 @@ again:
 
 
 void *
-gstd_initiate(const char *hostname, const char *service, const char *princ,
-	      int fd)
+gstd_initiate(const char *hostname, const char *service, char *princ, int fd)
 {
 	struct gstd_tok	*tok;
 	gss_ctx_id_t	ctx = GSS_C_NO_CONTEXT;
