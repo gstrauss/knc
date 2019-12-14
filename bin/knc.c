@@ -338,7 +338,6 @@ int
 main(int argc, char **argv)
 {
 	int	c;
-	int	ret;
 
 	/* initialize preferences */
 	memset(&prefs, 0, sizeof(prefs));	/* not strictly necessary... */
@@ -610,7 +609,6 @@ connect_host_inner(const char *domain, const char *service)
 	struct addrinfo	*res0;
 	int		 ret;
 	int		 s = -1;
-	char		 buf[256];
 
 	LOG(LOG_DEBUG, ("connecting to (%s, %s)", service, domain));
 	if (!service) {
@@ -1687,7 +1685,6 @@ do_inetd_nowait(int argc, char **argv)
 	struct sockaddr_storage	ss;
 	work_t			work;
 	socklen_t               len;
-	int			fd;
 	int			ret;
  
 	work_init(&work);
@@ -1755,7 +1752,6 @@ int
 do_listener(int listener, int argc, char **argv)
 {
 	struct sockaddr_storage	 sa;
-	uint16_t		 port;
 	int			 fd;
 	int			 num_children = 0;
 	int			 num_connections = 0;
