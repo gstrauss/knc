@@ -163,10 +163,7 @@ gstd_get_mech(gss_OID mech_oid)
 	OM_uint32	min;
 #endif
 	gss_buffer_desc	buf;
-	unsigned char   *bufp;
-	unsigned char   nibble;
 	char		*ret;
-	size_t		i, k;
 
 	if (mech_oid->length == sizeof(KNC_KRB5_MECH_OID) - 1 &&
 	    memcmp(mech_oid->elements, KNC_KRB5_MECH_OID,
