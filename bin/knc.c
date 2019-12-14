@@ -56,18 +56,25 @@ prefs_t prefs;
 /* BEGIN_DECLS */
 
 void	sig_handler(int);
+void	sig_set(int, void (*)(int), int);
 void	usage(const char *);
 int	do_bind_addr(const char *, struct sockaddr_in *);
 int	setup_listener(unsigned short int);
+int	handshake(work_t *);
 int	connect_host(const char *, const char *);
 int	connect_host_dosrv(const char *, const char *);
 int	connect_host_inner(const char *, const char *);
+void	log_reap_status(pid_t, int);
 int	reap(void);
 int	getport(const char *, const char *);
+int	sleep_reap(void);
+char *	xstrdup(const char *);
+void	parse_opt(const char *, const char *);
 int	launch_program(work_t *, int, char **);
 int	prep_inetd(void);
 int	do_inetd(int, char **);
 int	do_inetd_wait(int, char **);
+int	do_inetd_nowait(int, char **);
 int	do_listener_inet(int, char **);
 int	do_listener(int, int, char **);
 int	do_unix_socket(work_t *);
@@ -80,7 +87,9 @@ int	do_work(work_t *, int, char **);
 int	fork_and_do_work(work_t *, int, int, char **);
 int	move_local_to_network_buffer(work_t *);
 int	move_network_to_local_buffer(work_t *);
-void	write_buffer_init(write_buffer_t *);
+int	write_local_buffer(work_t *);
+int	write_network_buffer(work_t *);
+int	move_data(work_t *);
 void	work_init(work_t *);
 void	work_free(work_t *);
 int	shutdown_or_close(int, int);
@@ -512,13 +521,9 @@ main(int argc, char **argv)
 	exit(!do_client(argc, argv + optind));
 }
 
-extern int h_errno;
 
 #if defined(MY_SOLARIS)
-#	define my_hstrerror(e)	internal_hstrerror((e))
-#else
-#	define my_hstrerror(e)	hstrerror((e))
-#endif
+extern int h_errno;
 
 const char *
 internal_hstrerror(int e)
@@ -539,6 +544,11 @@ internal_hstrerror(int e)
 		return "Unknown error";
 	}
 }
+
+#	define my_hstrerror(e)	internal_hstrerror((e))
+#else
+#	define my_hstrerror(e)	hstrerror((e))
+#endif
 
 int
 connect_host(const char *domain, const char *service)
