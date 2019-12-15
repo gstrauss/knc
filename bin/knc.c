@@ -92,7 +92,10 @@ int	do_work(work_t *, int, char **);
 int	fork_and_do_work(work_t *, int, int, char **);
 int	move_local_to_network_buffer(work_t *);
 int	move_network_to_local_buffer(work_t *);
-void	write_buffer_init(write_buffer_t *);
+int	write_local_buffer(work_t *);
+int	write_network_buffer(work_t *);
+void	write_local_err(work_t *);
+int	move_data(work_t *);
 void	work_init(work_t *);
 void	work_free(work_t *);
 int	nonblocking_set(int);
@@ -999,6 +1002,32 @@ write_network_buffer(work_t *work)
 	return len;
 }
 
+void
+write_local_err(work_t *work)
+{
+	char errbuf[8192+1];
+	ssize_t total = 0;
+	do {
+		ssize_t rd = read(work->local_err, errbuf, sizeof(errbuf) - 1);
+		switch (rd) {
+		case -1:
+			if (errno==EINTR || errno==EAGAIN || errno==EWOULDBLOCK)
+				return;
+			/*FALLTHROUGH*/
+		case 0:
+			/* just close it on errors or EOF. */
+			close(work->local_err);
+			work->local_err = -1;
+			return;
+		default:
+			total += rd;
+			errbuf[rd] = 0;
+			LOG(LOG_ERR, ("stderr: %s", errbuf));
+			break;
+		}
+	} while (total < 65536);
+}
+
 int
 move_data(work_t *work)
 {
@@ -1016,7 +1045,6 @@ move_data(work_t *work)
 	char		shut_nwrite_lread = 0;
 	char		pollrdhup_net = 0;
 	char		pollrdhup_in = 0;
-	char		errbuf[8192];
 
 	memset(pfds, 0, sizeof(pfds));
 	pfd_net->fd = work->network_fd;
@@ -1168,21 +1196,10 @@ move_data(work_t *work)
 		if (ret > 0) {
 			/* Something happened on stderr, better log it */
 			if (pfd_err->revents) {
-				mret = read(work->local_err, errbuf,
-					    sizeof(errbuf) - 1);
-				switch (mret) {
-				case 0:
-					/*FALLTHROUGH*/
-				case -1:
-					/* just close it on errors or EOF. */
-					close(work->local_err);
-					work->local_err = -1;
+				write_local_err(work);
+				if (work->local_err == -1) {
 					pfd_err->revents = 0;
 					--nfds;/* pfd_err last in pfds[] list */
-					break;
-				default:
-					errbuf[mret] = 0;
-					LOG(LOG_ERR, ("stderr: %s", errbuf));
 				}
 			}
 
