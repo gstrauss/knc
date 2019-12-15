@@ -89,6 +89,7 @@ int	move_local_to_network_buffer(work_t *);
 int	move_network_to_local_buffer(work_t *);
 int	write_local_buffer(work_t *);
 int	write_network_buffer(work_t *);
+void	write_local_err(work_t *);
 int	move_data(work_t *);
 void	work_init(work_t *);
 void	work_free(work_t *);
@@ -1031,6 +1032,34 @@ write_network_buffer(work_t *work)
 	return len;
 }
 
+void
+write_local_err(work_t *work)
+{
+	char errbuf[8192+1];
+	ssize_t rd, total = 0;
+	do {
+		rd = read(work->local_err, errbuf, sizeof(errbuf) - 1);
+		switch (rd) {
+		case -1:
+			if (   errno == EINTR
+			    || errno == EAGAIN
+			    || errno == EWOULDBLOCK)
+				return;
+			/*FALLTHROUGH*/
+		case 0:
+			/* just close it on errors or EOF. */
+			close(work->local_err);
+			work->local_err = -1;
+			return;
+		default:
+			total += rd;
+			errbuf[rd] = 0;
+			LOG(LOG_ERR, ("stderr: %s", errbuf));
+			break;
+		}
+	} while (rd == sizeof(errbuf)-1 && total < 65536);
+}
+
 #define MAX(a,b)	(((a) > (b)) ? (a) : (b))
 
 int
@@ -1046,7 +1075,6 @@ move_data(work_t *work)
 	char		shut_nread_lwrite = 0;
 	char		shut_nwrite_lread = 0;
 	struct timeval	tv;
-	char		errbuf[8192];
 
 	work->local_buffer.in_valid = 0;
 	work->local_buffer.out_valid = 0;
@@ -1178,24 +1206,7 @@ move_data(work_t *work)
 			/* Something happened on stderr, better log it */
 			if ((work->local_err != -1) &&
 			    FD_ISSET(work->local_err, &rdset)) {
-				mret = read(work->local_err, errbuf,
-					    sizeof(errbuf) - 1);
-				switch (mret) {
-				case -1:
-					if (   errno == EINTR
-					    || errno == EAGAIN
-					    || errno == EWOULDBLOCK)
-						break;
-					/*FALLTHROUGH*/
-				case 0:
-					/* just close it on errors or EOF. */
-					close(work->local_err);
-					work->local_err = -1;
-					break;
-				default:
-					errbuf[mret] = 0;
-					LOG(LOG_ERR, ("stderr: %s", errbuf));
-				}
+				write_local_err(work);
 			}
 
 			/* The network has something to say */
