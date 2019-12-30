@@ -881,6 +881,7 @@ write_local_buffer(work_t *work)
 			 */
 			LOG(LOG_DEBUG, ("write got EPIPE"));
 
+			work->local_buffer.in_valid = 0;
 			work->local_buffer.out_valid = 0;
 			return 0;
 		} else {
@@ -992,6 +993,7 @@ write_network_buffer(work_t *work)
 			 */
 			LOG(LOG_DEBUG, ("gstd_write got EPIPE"));
 
+			work->network_buffer.in_valid = 0;
 			work->network_buffer.out_valid = 0;
 			return 0;
 		} else {
