@@ -898,6 +898,19 @@ write_local_buffer(work_t *work)
 		work->local_buffer.out_len = work->local_buffer.in_len;
 		work->local_buffer.out_pos = 0;
 		work->local_buffer.in_valid = 0;
+	} else if (work->local_buffer.in_valid && work->local_buffer.in_len > 0
+	           && sizeof(work->local_buffer.out)-work->local_buffer.out_len
+	                >= (size_t)work->local_buffer.in_len) {
+		/* append local_buffer.in to local_buffer.out if space allows
+		 * (local_buffer.out is more than 2x size of local_buffer.in)
+		 * (partial local_buffer.in not copied (diminishing returns))
+		 */
+		memcpy(&(work->local_buffer.out[0])+work->local_buffer.out_len,
+		       &(work->local_buffer.in[0]),
+		       work->local_buffer.in_len);
+
+		work->local_buffer.out_len += work->local_buffer.in_len;
+		work->local_buffer.in_valid = 0;
 	}
 
 	/* the "out" portion of our buffer is now properly set up */
