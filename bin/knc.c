@@ -1805,7 +1805,11 @@ do_listener(int listener, int argc, char **argv)
 	if (prefs.max_time)
 		endtime = time(NULL) + prefs.max_time;
 
-	while (1) {
+	while (!dienow) {
+		/* Exit if we have exceeded our maximum time limit */
+		if (endtime && time(NULL) > endtime)
+			break;
+
 		/*
 		 * If we have exceeded the maximum number of allowed
 		 * child processes, we sleep here.
@@ -1870,18 +1874,9 @@ do_listener(int listener, int argc, char **argv)
 		work_free(work);
 		free(work);
 
-		/*
-		 * If we've processed the maximum number of connections,
-		 * or have exceeded our maximum time limit, we exit...
-		 */
+		/* Exit if we've processed the maximum number of connections */
 		if (prefs.max_connections &&
 		    num_connections >= prefs.max_connections)
-			break;
-
-		if (endtime && time(NULL) > endtime)
-			break;
-
-		if (dienow)
 			break;
 	}
 
