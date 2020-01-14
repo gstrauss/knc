@@ -1819,13 +1819,6 @@ do_listener(int listener, int argc, char **argv)
 		/* Reap any children who've died */
 		num_children -= reap();
 
-		if ((work = (work_t *)malloc(sizeof(work_t))) == NULL) {
-			LOG(LOG_CRIT, ("malloc of work structure failed"));
-			return 0;
-		}
-
-		work_init(work);
-
 		client_len = sizeof(sa);
 		if ((fd = accept(listener, (struct sockaddr *)&sa,
 				 &client_len)) < 0) {
@@ -1835,11 +1828,15 @@ do_listener(int listener, int argc, char **argv)
 			    && errno != EWOULDBLOCK)
 				LOG_ERRNO(LOG_WARNING, ("failed to accept"));
 
-			work_free(work);
-			free(work);
-
 			continue;
 		}
+
+		if ((work = (work_t *)malloc(sizeof(work_t))) == NULL) {
+			LOG(LOG_CRIT, ("malloc of work structure failed"));
+			return 0;
+		}
+
+		work_init(work);
 
 		sockaddr_2str(work, (struct sockaddr *)&sa, client_len);
 		num_connections++;
