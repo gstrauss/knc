@@ -453,7 +453,7 @@ read_packet(int fd, gss_buffer_t buf, int timeout, int first)
 	int	  ret;
 
 	static uint32_t		len = 0;
-	static char		len_buf[4];
+	static char *		len_buf = (char *)&len;
 	static int		len_buf_pos = 0;
 	static char *		tmpbuf = 0;
 	static uint32_t		tmpbuf_pos = 0;
@@ -496,7 +496,7 @@ read_packet(int fd, gss_buffer_t buf, int timeout, int first)
 		return -2;
 
 	/* We have the complete length */
-	len = ntohl(*(uint32_t *)len_buf);
+	len = ntohl(len);
 
 	/*
 	 * We make sure recvd length is reasonable, allowing for some
