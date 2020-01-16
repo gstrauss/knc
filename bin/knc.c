@@ -1814,6 +1814,7 @@ do_listener(int listener, int argc, char **argv)
 	struct sockaddr_storage	 sa;
 	int			 fd;
 	int			 num_connections = 0;
+	int			 timeout = 60000; /* wake every 60s to reap */
 	time_t			 endtime = 0;
 	socklen_t		 client_len;
 	work_t			*work;
@@ -1833,8 +1834,15 @@ do_listener(int listener, int argc, char **argv)
 
 	while (!dienow) {
 		/* Exit if we have exceeded our maximum time limit */
-		if (endtime && time(NULL) > endtime)
-			break;
+		if (endtime) {
+			time_t now = time(NULL);
+			if (now > endtime)
+				break;
+
+			timeout = (endtime - now) * 1000 + 1000;
+			/* wake every 60 sec to check for children to reap() */
+			if (timeout > 60000) timeout = 60000;
+		}
 
 		/*
 		 * If we have exceeded the maximum number of allowed
@@ -1850,7 +1858,7 @@ do_listener(int listener, int argc, char **argv)
 		num_children -= reap();
 
 		/* poll() is interruptable, even by sigaction w/ SA_RESTART */
-		if (poll(pfds, 1, 60000) <= 0) { /* wake every 60s to reap() */
+		if (poll(pfds, 1, timeout) <= 0) {
 			continue;
 		}
 
