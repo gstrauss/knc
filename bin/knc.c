@@ -128,6 +128,34 @@ vlog(const char *fmt, ...)
 }
 
 int dienow = 0;
+int num_children = 0;
+
+static pid_t
+do_fork (void) {
+	pid_t pid;
+
+	/* NB: using threads would require that sigprocmask() be replaced with
+	 * pthread_sigmask() and program linked with -pthread */
+	sigset_t mask;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGCHLD);
+	sigaddset(&mask, SIGHUP);
+	sigprocmask(SIG_BLOCK, &mask, NULL);
+
+	pid = fork();
+
+	if (pid == 0) {
+		sig_set(SIGCHLD, SIG_DFL, 0);
+		sig_set(SIGHUP, SIG_DFL, 0);
+	} else if (pid > 0) {
+		if (!prefs.no_fork)
+			++num_children;
+	}
+
+	sigprocmask(SIG_UNBLOCK, &mask, NULL);
+
+	return pid;
+}
 
 void
 sig_handler(int signum)
@@ -1118,20 +1146,6 @@ move_data(work_t *work)
 			++shut_nwrite_lread;
 		}
 
-		/*
-		 * Now here we may have received SIGCHLD.
-		 * (it's possible we have no child, of course,
-		 * but then what would we be doing here?)
-		 *
-		 * Once we've drained any communication coming *from*
-		 * the child (local_active == 0 *and*
-		 * work->network_buffer.out_valid == 0), then
-		 * those facts, in combination with with a dead child
-		 * means we should exit.
-		 */
-		if (reap() > 0)
-			LOG(LOG_NOTICE, ("child died before EOF"));
-
 		FD_ZERO(&rdset);
 		FD_ZERO(&wrset);
 
@@ -1493,6 +1507,12 @@ do_work(work_t *work, int argc, char **argv)
 	close(work->local_out);
 	close(work->local_err);
 
+	/* reap and log status of program exec'd by launch_program()
+	 * if child has exited, else leave child to be inherited by init
+	 */
+	if (!local && argc != 0)
+		reap();
+
 	return ret;
 }
 
@@ -1515,7 +1535,7 @@ launch_program(work_t *work, int argc, char **argv)
 		return 0;
 	}
 
-	pid = fork();
+	pid = do_fork();
 
 	if (pid == -1) {
 		LOG_ERRNO(LOG_CRIT, ("unable to fork to launch program"));
@@ -1583,7 +1603,7 @@ fork_and_do_work(work_t *work, int listener, int argc, char **argv)
 {
 	pid_t	pid;
 
-	pid = fork();
+	pid = do_fork();
 
 	if (pid == -1) {
 		LOG_ERRNO(LOG_CRIT, ("unable to fork to service connection"));
@@ -1651,7 +1671,7 @@ fork_and_do_unix_socket(work_t *work, int listener)
 {
 	pid_t	pid;
 
-	pid = fork();
+	pid = do_fork();
 
 	if (pid == -1) {
 		LOG_ERRNO(LOG_CRIT, ("unable to fork to service connection"));
@@ -1792,7 +1812,6 @@ do_listener(int listener, int argc, char **argv)
 {
 	struct sockaddr_storage	 sa;
 	int			 fd;
-	int			 num_children = 0;
 	int			 num_connections = 0;
 	time_t			 endtime = 0;
 	socklen_t		 client_len;
@@ -1856,7 +1875,6 @@ do_listener(int listener, int argc, char **argv)
 				do_unix_socket(work);
 			else {
 				fork_and_do_unix_socket(work, listener);
-				++num_children;
 			}
 		} else {
 			/* execing a program */
@@ -1864,7 +1882,6 @@ do_listener(int listener, int argc, char **argv)
 				do_work(work, argc, argv);
 			else {
 				fork_and_do_work(work, listener, argc, argv);
-				++num_children;
 			}
 		}
 
