@@ -246,6 +246,7 @@ static ssize_t	stream_fill(stream, size_t);
 static size_t	stream_avail(stream);
 static void	stream_garbage_collect(stream);
 
+static int	so_option(int, int, int);
 static int	socket_options(int, int);
 static size_t	read_packet(stream, void **b);
 static size_t	put_packet(knc_ctx, gss_buffer_t);
@@ -1127,6 +1128,7 @@ knc_get_opt(knc_ctx ctx, unsigned opt)
 	case KNC_OPT_NOPRIVACY:
 	case KNC_SOCK_NONBLOCK:
 	case KNC_SOCK_CLOEXEC:
+	case KNC_SO_KEEPALIVE:
 		return (ctx->opts & opt) ? 1 : 0;
 
 	case KNC_OPT_SENDINBUFSIZ:
@@ -1156,10 +1158,15 @@ knc_set_opt(knc_ctx ctx, unsigned opt, int value)
 	case KNC_OPT_SENDCMDS:
 	case KNC_SOCK_NONBLOCK:
 	case KNC_SOCK_CLOEXEC:
-		if (value)
+	case KNC_SO_KEEPALIVE:
+		if (value) {
+			if (ctx->opts & opt) return;
 			ctx->opts |= opt;
-		else
+		}
+		else {
+			if (!(ctx->opts & opt)) return;
 			ctx->opts &= ~opt;
+		}
 		break;
 
 	case KNC_OPT_SENDINBUFSIZ:
@@ -1186,6 +1193,17 @@ knc_set_opt(knc_ctx ctx, unsigned opt, int value)
 			socket_options(rfd, ctx->opts);
 			if (wfd != rfd)
 				socket_options(wfd, ctx->opts);
+		}
+		/* XXXrcd: should we do something with the local side?? */
+		break;
+	case KNC_SO_KEEPALIVE:
+		if (ctx->net_uses_fd) {
+			rfd = ((struct fd_cookie *)ctx->netcookie)->rfd;
+			wfd = ((struct fd_cookie *)ctx->netcookie)->wfd;
+
+			so_option(rfd, SO_KEEPALIVE, value);
+			if (wfd != rfd)
+				so_option(wfd, SO_KEEPALIVE, value);
 		}
 		/* XXXrcd: should we do something with the local side?? */
 		break;
@@ -2123,6 +2141,12 @@ knc_initiate(knc_ctx ctx)
 	knc_state_init(ctx, tmp, 0);
 }
 
+static int
+so_option(int s, int opt, int value)
+{
+	return setsockopt(s, SOL_SOCKET, opt, &value, sizeof(value));
+}
+
 #ifdef SOCK_NONBLOCK
 #define	I_SOCK_NONBLOCK	SOCK_NONBLOCK
 #else
@@ -2175,10 +2199,24 @@ get_socket(int d, int t, int p, int opts)
 	t |= I_SOCK_NOSIGPIPE;
 
 	s = socket(d, t, p);
+	if (s < 0)
+		return s;
 
 #if !(I_SOCK_NONBLOCK || I_SOCK_CLOEXEC || I_SOCK_NOSIGPIPE)
 	socket_options(s, opts);
 #endif
+
+	if (opts & KNC_SO_KEEPALIVE) {
+		if (so_option(s, SO_KEEPALIVE, 1) < 0) {
+			/* (minor and not expected to fail on socket;
+			 *  we do not have ctx available in this subroutine)
+			knc_debugf(ctx,
+			           "unable to set SO_KEEPALIVE on socket\n");
+			 */
+
+			/* XXXrcd: We continue on failure */
+		}
+	}
 
 	return s;
 }

@@ -63,7 +63,7 @@ int		knc_get_opt(knc_ctx, unsigned);
 void		knc_set_opt(knc_ctx, unsigned, int);
 
 /*
- * These are the ``options''.  Some of them are KNC_SOCK and some are
+ * These are the ``options''.  Some of them are KNC_SOCK or KNC_SO and some are
  * KNC_OPT, this distinguishes those which are directly tied to the
  * corresponding socket options vs. those that affect the protocol that
  * KNC implements.
@@ -76,6 +76,7 @@ void		knc_set_opt(knc_ctx, unsigned, int);
 #define KNC_OPT_NOPRIVACY	0x0004
 #define	KNC_OPT_NOPRIVATE	KNC_OPT_NOPRIVACY
 #define KNC_OPT_SENDCMDS	0x0008
+#define	KNC_SO_KEEPALIVE	0x0010
 
 /* The following options are ints rather than boolean */
 
