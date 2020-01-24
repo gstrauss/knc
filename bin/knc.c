@@ -74,7 +74,6 @@ void	sig_set(int, void (*)(int), int);
 void	usage(const char *);
 int	do_bind_addr(const char *, struct sockaddr_in *);
 int	setup_listener(unsigned short int);
-int	handshake(work_t *);
 int	connect_host(const char *, const char *);
 int	connect_host_dosrv(const char *, const char *);
 int	connect_host_inner(const char *, const char *);
@@ -760,32 +759,6 @@ setup_listener(unsigned short int port)
 	}
 
 	return fd;
-}
-
-int
-handshake(work_t *work)
-{
-
-	if (prefs.is_listener) {
-		if ((work->context = gstd_accept(work->network_fd,
-					 &work->credentials,
-					 &work->export_name,
-					 &work->mech)) == NULL)
-			return 0;
-		else
-			return 1;
-	} else {
-		if ((work->context = gstd_initiate(work->hostname,
-						   work->service,
-						   work->sprinc,
-						   work->network_fd)) == NULL)
-			return 0;
-		else
-			return 1;
-	}
-
-	/* NOTREACHED */
-	return 0;
 }
 
 /*
@@ -1559,7 +1532,10 @@ do_work(work_t *work, int argc, char **argv)
 	 * We must establish what the remote end's credentials are, and
 	 * begin ferrying data to and fro.
 	 */
-	if (!handshake(work)) {
+	if ((work->context = gstd_accept(work->network_fd,
+					 &work->credentials,
+					 &work->export_name,
+					 &work->mech)) == NULL) {
 		LOG(LOG_ERR, ("handshake with peer failed"));
 		return 0;
 	}
@@ -2059,12 +2035,7 @@ do_client(int argc, char **argv)
 	memset(&sa, 0, sizeof(sa));
 	work_init(&work);
 
-	service = strdup(argv[0]);
-	if (!service) {
-		LOG(LOG_ERR, ("do_client: strdup failed, %s",
-		    strerror(errno)));
-		return 0;
-	}
+	service = xstrdup(argv[0]);
 
 	/* Pick out the hostname portion of service@host */
 	if ((hostname = (index(service, '@'))) == NULL) {
@@ -2092,9 +2063,6 @@ do_client(int argc, char **argv)
 
 	if (!port)
 		port = service;
-
-	if (prefs.sprinc)
-		work.sprinc = xstrdup(prefs.sprinc);
 
 	work.local_in = STDIN_FILENO;
 	work.local_out = STDOUT_FILENO;
@@ -2126,14 +2094,16 @@ do_client(int argc, char **argv)
 	if (prefs.so_keepalive)
 		so_keepalive_set(work.network_fd); /*(continue even if error)*/
 
-	work.hostname = xstrdup(hostname);
-	work.service = xstrdup(service);
-	free(service);
 
-	if (!handshake(&work)) {
+	if ((work.context = gstd_initiate(hostname,
+					  service,
+					  prefs.sprinc,
+					  work.network_fd)) == NULL) {
+		free(service);
 		work_free(&work);
 		return 0;
 	}
+	free(service);
 
 	ret = move_data(&work);
 
@@ -2162,10 +2132,6 @@ work_free(work_t *work)
 
 	if (work->context != NULL)
 		gstd_close(work->context);
-
-	free(work->service);
-	free(work->hostname);
-	free(work->sprinc);
 }
 
 int

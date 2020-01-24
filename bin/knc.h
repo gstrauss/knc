@@ -90,11 +90,6 @@ typedef struct work_s {
 	char *			export_name;
 	char *			mech;
 	void *			context;
-
-	/* for clients */
-	char *			service;
-	char *			hostname;
-	char *			sprinc;
 } work_t;
 
 const char *vlog(const char *, ...);
