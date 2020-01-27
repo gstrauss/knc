@@ -27,8 +27,10 @@
 #include "config.h"
 #endif
 
+#include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 
 #include <netinet/in.h>
@@ -2288,23 +2290,15 @@ fdread(void *cookie, void *buf, size_t len)
 static ssize_t
 fdwritev(void *cookie, const struct iovec *iov, int iovcnt)
 {
+	int	fd = ((struct fd_cookie *)cookie)->wfd;
+
+	return writev(fd, iov, iovcnt);
+}
+
+static ssize_t
+fdwritev_block_sigpipe(void *cookie, const struct iovec *iov, int iovcnt)
+{
 	int		fd = ((struct fd_cookie *)cookie)->wfd;
-
-#if defined(O_NOSIGPIPE) || defined(MSG_NOSIGNAL)
-#ifndef MSG_NOSIGNAL
-#define MSG_NOSIGNAL 0
-#endif
-        struct msghdr msg = { 0 };
-
-        msg.msg_name = NULL;
-        msg.msg_namelen = 0;
-        msg.msg_iov = (void *)(uintptr_t)iov;
-        msg.msg_iovlen = iovcnt;
-        msg.msg_control = NULL;
-        msg.msg_controllen = 0;
-        msg.msg_flags = 0;
-        return sendmsg(fd, &msg, MSG_NOSIGNAL);
-#else
 	struct timespec	ts_zero = {0, 0};
 	sigset_t	blocked;
 	sigset_t	pending;
@@ -2350,7 +2344,61 @@ fdwritev(void *cookie, const struct iovec *iov, int iovcnt)
 
 	errno = my_errno;
 	return ret;
+}
+
+static ssize_t
+fdwritev_sock(void *cookie, const struct iovec *iov, int iovcnt)
+{
+#if defined(O_NOSIGPIPE) || defined(MSG_NOSIGNAL)
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
 #endif
+	int fd = ((struct fd_cookie *)cookie)->wfd;
+	struct msghdr msg = { 0 };
+
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = (void *)(uintptr_t)iov;
+	msg.msg_iovlen = iovcnt;
+	msg.msg_control = NULL;
+	msg.msg_controllen = 0;
+	msg.msg_flags = 0;
+	return sendmsg(fd, &msg, MSG_NOSIGNAL);
+#else
+	/* XXX: consider creating an interface for consumer to
+	 * indicate that SIGPIPE is ignored globally in program
+	 * (and set flag in a file-scoped static variable)
+	 * Then, there would be need to defend against it here. */
+	return fdwritev_block_sigpipe(cookie, iov, iovcnt);
+#endif
+}
+
+typedef ssize_t(*fdwritev_fn)(void *, const struct iovec *, int);
+
+static fdwritev_fn
+fdwritev_choose(int wfd)
+{
+	struct stat st;
+
+	if (wfd == -1 || fstat(wfd, &st) == -1)
+		return fdwritev;
+
+#if defined(O_NOSIGPIPE)
+	fcntl(F_SETFL, wfd, fcntl(F_GETFL, wfd, 0) | O_NOSIGPIPE);
+#endif
+
+	if (S_ISSOCK(st.st_mode))
+		return fdwritev_sock;
+#if !defined(O_NOSIGPIPE)
+	else if (S_ISFIFO(st.st_mode))
+		/* XXX: consider creating an interface for consumer to
+		 * indicate that SIGPIPE is ignored globally in program
+		 * (and set flag in a file-scoped static variable)
+		 * Then, there would be need to defend against it here. */
+		return fdwritev_block_sigpipe;
+#endif
+	else
+		return fdwritev;
 }
 
 static int
@@ -2396,7 +2444,7 @@ knc_set_net_fds(knc_ctx ctx, int rfd, int wfd)
 
 	ctx->netcookie = cookie;
 	ctx->netread   = fdread;
-	ctx->netwritev = fdwritev;
+	ctx->netwritev = fdwritev_choose(wfd);
 	ctx->netclose  = fdclose;
 }
 
@@ -2466,7 +2514,7 @@ knc_set_local_fds(knc_ctx ctx, int rfd, int wfd)
 
 	ctx->localcookie = cookie;
 	ctx->localread   = fdread;
-	ctx->localwritev = fdwritev;
+	ctx->localwritev = fdwritev_choose(wfd);
 	ctx->localclose  = fdclose;
 }
 
