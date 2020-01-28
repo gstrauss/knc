@@ -34,6 +34,7 @@
 #include <sys/uio.h>
 
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #include <assert.h>
 #include <err.h>
@@ -2144,6 +2145,12 @@ knc_initiate(knc_ctx ctx)
 }
 
 static int
+tcp_option(int s, int opt, int value)
+{
+	return setsockopt(s, IPPROTO_TCP, opt, &value, sizeof(value));
+}
+
+static int
 so_option(int s, int opt, int value)
 {
 	return setsockopt(s, SOL_SOCKET, opt, &value, sizeof(value));
@@ -2207,6 +2214,8 @@ get_socket(int d, int t, int p, int opts)
 #if !(I_SOCK_NONBLOCK || I_SOCK_CLOEXEC || I_SOCK_NOSIGPIPE)
 	socket_options(s, opts);
 #endif
+
+	tcp_option(s, TCP_NODELAY, 1);
 
 	if (opts & KNC_SO_KEEPALIVE) {
 		if (so_option(s, SO_KEEPALIVE, 1) < 0) {
@@ -2285,6 +2294,22 @@ fdread(void *cookie, void *buf, size_t len)
 	int	fd = ((struct fd_cookie *)cookie)->rfd;
 
 	return read(fd, buf, len);
+}
+
+typedef ssize_t(*fdread_fn)(void *, void *, size_t);
+
+static fdread_fn
+fdread_choose(int rfd)
+{
+	struct stat st;
+
+	if (rfd == -1 || fstat(rfd, &st) == -1)
+		return fdread;
+
+	if (S_ISSOCK(st.st_mode))
+		tcp_option(rfd, TCP_NODELAY, 1);
+
+	return fdread;
 }
 
 static ssize_t
@@ -2387,8 +2412,10 @@ fdwritev_choose(int wfd)
 	fcntl(F_SETFL, wfd, fcntl(F_GETFL, wfd, 0) | O_NOSIGPIPE);
 #endif
 
-	if (S_ISSOCK(st.st_mode))
+	if (S_ISSOCK(st.st_mode)) {
+		tcp_option(wfd, TCP_NODELAY, 1);
 		return fdwritev_sock;
+	}
 #if !defined(O_NOSIGPIPE)
 	else if (S_ISFIFO(st.st_mode))
 		/* XXX: consider creating an interface for consumer to
@@ -2443,7 +2470,7 @@ knc_set_net_fds(knc_ctx ctx, int rfd, int wfd)
 	ctx->net_uses_fd = 1;
 
 	ctx->netcookie = cookie;
-	ctx->netread   = fdread;
+	ctx->netread   = fdread_choose(rfd);
 	ctx->netwritev = fdwritev_choose(wfd);
 	ctx->netclose  = fdclose;
 }
@@ -2513,7 +2540,7 @@ knc_set_local_fds(knc_ctx ctx, int rfd, int wfd)
 	ctx->local_uses_fd = 1;
 
 	ctx->localcookie = cookie;
-	ctx->localread   = fdread;
+	ctx->localread   = fdread_choose(rfd);
 	ctx->localwritev = fdwritev_choose(wfd);
 	ctx->localclose  = fdclose;
 }
