@@ -64,6 +64,7 @@
 #include "config.h"
 #include "gssstdio.h"
 #include "knc.h"
+#include "libknc.h"
 
 prefs_t prefs;
 
@@ -74,9 +75,6 @@ void	sig_set(int, void (*)(int), int);
 void	usage(const char *);
 int	do_bind_addr(const char *, struct sockaddr_in *);
 int	setup_listener(unsigned short int);
-int	connect_host(const char *, const char *);
-int	connect_host_dosrv(const char *, const char *);
-int	connect_host_inner(const char *, const char *);
 void	log_reap_status(pid_t, int);
 int	reap(void);
 int	getport(const char *, const char *);
@@ -549,6 +547,25 @@ main(int argc, char **argv)
 	if (prefs.is_listener)
 		exit(!do_listener_inet(argc, argv + optind));
 
+	if (argc <= 0) {
+		fprintf(stderr, "missing arg for target service@host\n");
+		exit(1);
+	}
+
+	/* XXX: libknc should check this (and should check args for NULL) */
+	/*
+	 * XXXrcd: for now, we default the port to be the service name,
+	 *         but later we should put this logic in the SRV RR
+	 *         handling code.  The idea will be: if the port isn't
+	 *         provided, then look for the SRV RRs failing back to
+	 *         use getaddrinfo(3) with service as the port.  If the
+	 *         port is provided, then avoid the SRV RR lookup.
+	 */
+	if (index(argv[optind], '@') == NULL) {
+		fprintf(stderr, "invalid service@host: %s\n", argv[optind]);
+		exit(1);
+	}
+
 	exit(!do_client(argc, argv + optind));
 }
 
@@ -580,97 +597,6 @@ internal_hstrerror(int e)
 #else
 #	define my_hstrerror(e)	hstrerror((e))
 #endif
-
-int
-connect_host(const char *domain, const char *service)
-{
-
-	/*
-	 * if getaddrinfo does not do SRV records, then we must
-	 * unfortunately special case them.  We use libroken for
-	 * this.  Otherwise just call the inner function.
-	 */
-#if 0	/* XXXrcd: not yet, not yet */
-	return connect_host_dosrv(domain, service);
-#else
-	return connect_host_inner(domain, service);
-#endif
-}
-
-#if 0	/* XXXrcd: not yet, not yet */
-#define PORTSTRLEN	32
-
-int
-connect_host_dosrv(const char *domain, const char *service)
-{
-	struct resource_record	*rr;
-	struct dns_reply	*r;
-	char			 portstr[PORTSTRLEN];
-	char			*qdomain;
-	int			 fd;
-
-	asprintf(&qdomain, "_%s._tcp%s%s", service, *domain?".":"", domain);
-	LOG(LOG_DEBUG, ("connect_host_dosrv looking up %s", qdomain));
-	r = dns_lookup(qdomain, "SRV");
-	free(qdomain);
-	if (!r)
-		return connect_host_inner(domain, service);
-
-	dns_srv_order(r);
-
-	for (rr = r->head; rr; rr = rr->next) {
-		if (rr->type != T_SRV)
-			continue;
-		snprintf(portstr, PORTSTRLEN, "%u", rr->u.srv->port);
-		fd = connect_host_inner(rr->u.srv->target, portstr);
-		if (fd != -1)
-			break;
-	}
-	dns_free_data(r);
-	return fd;
-}
-
-#undef PORTSTRLEN
-#endif
-
-int
-connect_host_inner(const char *domain, const char *service)
-{
-	struct addrinfo	 ai;
-	struct addrinfo	*res;
-	struct addrinfo	*res0;
-	int		 ret;
-	int		 s = -1;
-
-	LOG(LOG_DEBUG, ("connecting to (%s, %s)", service, domain));
-	if (!service) {
-		LOG(LOG_ERR, ("Failed to provide port\n"));
-		return -1;
-	}
-
-	memset(&ai, 0x0, sizeof(ai));
-	ai.ai_socktype = SOCK_STREAM;
-	ret = getaddrinfo(domain, service, &ai, &res0);
-	if (ret) {
-		LOG(LOG_ERR, ("getaddrinfo: (%s,%s) %s", domain, service,
-		    gai_strerror(ret)));
-		return -1;
-	}
-	for (res=res0; res; res=res->ai_next) {
-		s = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-		if (s == -1) {
-			LOG(LOG_ERR, ("connect: %s", strerror(errno)));
-			continue;
-		}
-		ret = connect(s, res->ai_addr, res->ai_addrlen);
-		if (ret != -1)
-			break;
-		close(s);
-		s = -1;
-		LOG(LOG_ERR, ("connect: %s", strerror(errno)));
-	}
-	return s;
-}
 
 int
 do_bind_addr(const char *s, struct sockaddr_in *sa)
@@ -1427,6 +1353,50 @@ move_data(work_t *work)
 	return 1;
 }
 
+static int
+report_ctx_err(knc_ctx ctx, const char *msg)
+{
+	if (msg) LOG(LOG_ERR, ("%s: %s", msg, knc_errstr(ctx)));
+	knc_ctx_destroy(ctx);
+	return 0;
+}
+
+static int
+report_ctx_errno(knc_ctx ctx, const char *msg)
+{
+	if (msg) LOG_ERRNO(LOG_ERR, ("%s", msg));
+	knc_ctx_destroy(ctx);
+	return 0;
+}
+
+static int
+move_data_ctx(knc_ctx ctx)
+{
+	knc_callback	cbs[4];
+	struct pollfd	fds[4];
+
+	do {
+		/* (similar to (private) libknc.c:run_loop()) */
+		nfds_t nfds = knc_get_pollfds(ctx, fds, cbs, 4);
+		int ret = poll(fds, nfds, -1);
+		if (ret <= 0) {
+			if (ret == -1 && errno != EINTR)
+				return report_ctx_errno(ctx, "poll()");
+			continue;
+		}
+
+		/* (ret > 0) */
+		knc_service_pollfds(ctx, fds, cbs, nfds);
+		knc_garbage_collect(ctx);
+		if (knc_error(ctx))
+			return report_ctx_err(ctx, "knc_service_pollfds()");
+
+	} while (!knc_io_complete(ctx));
+
+	knc_ctx_destroy(ctx);
+	return 1;
+}
+
 int
 send_creds(int local, work_t *work, const char *const key,
 	   const char *const value)
@@ -2010,93 +1980,110 @@ do_listener(int listener, int argc, char **argv)
 int
 do_client(int argc, char **argv)
 {
-	char			*hostname;
-	char			*service;
-	char			*port;
-	int			 fd;
-	int			 ret;
-	work_t			 work;
-	struct sockaddr_in	 sa;
-	struct stat		 st;
+	const char *svchost    = argv[0];
+	const char *defservice = "HTTP";
+	const char *defport    = argv[1]; /*(can be NULL)*/
 
-	memset(&sa, 0, sizeof(sa));
-	work_init(&work);
-
-	service = xstrdup(argv[0]);
-
-	/* Pick out the hostname portion of service@host */
-	if ((hostname = (index(service, '@'))) == NULL) {
-		    LOG(LOG_ERR, ("invalid service@host: %s", argv[0]));
-		    free(service);
-		    return 0;
+	knc_ctx ctx = knc_ctx_init();
+	if (ctx == NULL) {
+		LOG_ERRNO(LOG_ERR, ("knc_connect(): ENOMEM"));
+		return 0;
 	}
 
-	*hostname++ = '\0';
-
-	port = index(hostname, ':');
-	if (port)
-		*port++ = '\0';
-	if (argv[1])
-		port = argv[1];
-
-	/*
-	 * XXXrcd: for now, we default the port to be the service name,
-	 *         but later we should put this logic in the SRV RR
-	 *         handling code.  The idea will be: if the port isn't
-	 *         provided, then look for the SRV RRs failing back to
-	 *         use getaddrinfo(3) with service as the port.  If the
-	 *         port is provided, then avoid the SRV RR lookup.
-	 */
-
-	if (!port)
-		port = service;
-
-	work.local_in = STDIN_FILENO;
-	work.local_out = STDOUT_FILENO;
-
-	if (fstat(STDIN_FILENO, &st) == 0 && S_ISSOCK(st.st_mode))
-		tcp_nodelay_set(STDIN_FILENO); /*(continue even if error)*/
-	if (fstat(STDOUT_FILENO, &st) == 0 && S_ISSOCK(st.st_mode))
-		tcp_nodelay_set(STDOUT_FILENO); /*(continue even if error)*/
-
-	/* work.local_err = STDERR_FILENO;*/
-	/* XXX - why doesn't this work for clients? */
-	work.local_err = -1;
+	knc_set_debug(ctx, 0);
+	knc_set_debug_prefix(ctx, "knc-client");
 
 	if (prefs.network_fd != -1) {
 		LOG(LOG_DEBUG, ("wrapping existing fd %d", prefs.network_fd));
-		work.network_fd = prefs.network_fd;
+
+		if (prefs.network_fd == STDIN_FILENO
+		    || prefs.network_fd == STDOUT_FILENO)
+			return report_ctx_err(ctx,
+			                      "network socket conflicts with "
+			                      "stdin or stdout");
+
+		knc_give_net_fd(ctx, prefs.network_fd);
+		if (knc_error(ctx) != 0)
+			return report_ctx_err(ctx, "knc_give_net_fd()");
+
+		errno = 0;
+		knc_set_opt(ctx, KNC_SOCK_NONBLOCK, 1);
+		if (errno != 0)
+			return report_ctx_errno(ctx,
+			                        "unable to set O_NONBLOCK on "
+			                        "network socket");
+
+		errno = 0;
+		knc_set_opt(ctx, KNC_SOCK_CLOEXEC, 1);
+		if (errno != 0)
+			return report_ctx_errno(ctx,
+			                        "failed to set FD_CLOEXEC on "
+			                        "network socket");
+
+		if (prefs.so_keepalive) {
+			errno = 0;
+			knc_set_opt(ctx, KNC_SO_KEEPALIVE, 1);
+			if (errno != 0) {
+				LOG_ERRNO(LOG_ERR, ("failed to set SO_KEEPALIVE"
+						    " on network socket"));
+				/* XXXrcd: We continue on failure */
+			}
+		}
+
+		if (prefs.sprinc) {
+			knc_import_set_service(ctx, prefs.sprinc, GSS_C_NO_OID);
+		} else {
+			char *colon = strchr(argv[0], ':');
+			if (colon) *colon = '\0';
+			knc_import_set_hb_service(ctx, svchost, defservice);
+			if (colon) *colon = ':';
+		}
+		if (knc_error(ctx) != 0)
+			return report_ctx_err(ctx, "knc_import_set_service()");
+
+		knc_initiate(ctx);
+		if (knc_error(ctx) != 0)
+			return report_ctx_err(ctx, "knc_initiate()");
 	} else {
-		fd = connect_host(hostname, port);
+		/* knc_connect() expects blocking connect,
+		 * so omit KNC_SOCK_NONBLOCK and set flag after knc_connect()
+		 * (knc_connect() does not handle EINPROGRESS)
+		 */
+		int opts = KNC_SOCK_CLOEXEC
+		         | (prefs.so_keepalive ? KNC_SO_KEEPALIVE : 0);
 
-		if (fd == -1)
-			exit(1);
+		if (prefs.sprinc) {
+			knc_import_set_service(ctx, prefs.sprinc, GSS_C_NO_OID);
+			if (knc_error(ctx) != 0)
+				return
+				  report_ctx_err(ctx,
+				                 "knc_import_set_service()");
+		}
 
-		work.network_fd = fd;
+		/* N.B.: blocking connect() */
+		knc_connect(ctx, svchost, defservice, defport, opts);
+		if (knc_error(ctx) != 0)
+			return report_ctx_err(ctx, "knc_connect()");
+
+		errno = 0;
+		knc_set_opt(ctx, KNC_SOCK_NONBLOCK, 1);
+		if (errno != 0)
+			return report_ctx_errno(ctx,
+			                        "unable to set O_NONBLOCK on "
+			                        "network socket");
 	}
+	knc_authenticate(ctx);
+	if (knc_error(ctx) != 0)
+		return report_ctx_err(ctx, "knc_authenticate()");
 
-	tcp_nodelay_set(work.network_fd); /*(continue even if error)*/
+	nonblocking_set(STDIN_FILENO);
+	nonblocking_set(STDOUT_FILENO);
 
-	/* Optionally set keepalives */
-	if (prefs.so_keepalive)
-		so_keepalive_set(work.network_fd); /*(continue even if error)*/
+	knc_set_local_fds(ctx, STDIN_FILENO, STDOUT_FILENO);
+	if (knc_error(ctx) != 0)
+		return report_ctx_err(ctx, "knc_set_local_fds()");
 
-
-	if ((work.context = gstd_initiate(hostname,
-					  service,
-					  prefs.sprinc,
-					  work.network_fd)) == NULL) {
-		free(service);
-		work_free(&work);
-		return 0;
-	}
-	free(service);
-
-	ret = move_data(&work);
-
-	work_free(&work);
-
-	return ret;
+	return move_data_ctx(ctx);
 }
 
 void
