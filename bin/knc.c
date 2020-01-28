@@ -28,10 +28,12 @@
 #include <sys/poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 
 #include <errno.h>
@@ -95,6 +97,7 @@ int	move_data(work_t *);
 void	work_init(work_t *);
 void	work_free(work_t *);
 int	shutdown_or_close(int, int);
+int	tcp_nodelay_set(int);
 int	nonblocking_set(int);
 int	nonblocking_clr(int);
 void	sockaddr_2str(work_t *, const struct sockaddr *, socklen_t);
@@ -1418,6 +1421,8 @@ do_work(work_t *work, int argc, char **argv)
 	struct linger	l;
 	int		local = 0;
 
+	tcp_nodelay_set(work->network_fd); /*(continue even if error)*/
+
 	/*
 	 * We now have a socket (network_fd) and soon, a local descriptor --
 	 * either from inetd or one side of a socketpair we created before
@@ -1930,6 +1935,7 @@ do_client(int argc, char **argv)
 	int			 ret;
 	work_t			 work;
 	struct sockaddr_in	 sa;
+	struct stat		 st;
 
 	memset(&sa, 0, sizeof(sa));
 	work_init(&work);
@@ -1974,6 +1980,11 @@ do_client(int argc, char **argv)
 	work.local_in = STDIN_FILENO;
 	work.local_out = STDOUT_FILENO;
 
+	if (fstat(STDIN_FILENO, &st) == 0 && S_ISSOCK(st.st_mode))
+		tcp_nodelay_set(STDIN_FILENO); /*(continue even if error)*/
+	if (fstat(STDOUT_FILENO, &st) == 0 && S_ISSOCK(st.st_mode))
+		tcp_nodelay_set(STDOUT_FILENO); /*(continue even if error)*/
+
 	/* work.local_err = STDERR_FILENO;*/
 	/* XXX - why doesn't this work for clients? */
 	work.local_err = -1;
@@ -1989,6 +2000,8 @@ do_client(int argc, char **argv)
 
 		work.network_fd = fd;
 	}
+
+	tcp_nodelay_set(work.network_fd); /*(continue even if error)*/
 
 	/* Optionally set keepalives */
 	if (prefs.so_keepalive) {
@@ -2043,6 +2056,18 @@ work_free(work_t *work)
 	free(work->service);
 	free(work->hostname);
 	free(work->sprinc);
+}
+
+int
+tcp_nodelay_set(int fd)
+{
+	int	flag = 1;
+
+	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) == 0)
+		return 0;
+
+	LOG_ERRNO(LOG_ERR, ("unable to set TCP_NODELAY on socket"));
+	return -1;
 }
 
 int
