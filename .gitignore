@@ -22,6 +22,7 @@ Makefile.in
 /cf/ltversion.m4
 /cf/lt~obsolete.m4
 /compile
+/config.cache
 /config.guess
 /config.h
 /config.h.in
