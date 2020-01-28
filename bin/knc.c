@@ -97,6 +97,7 @@ int	move_data(work_t *);
 void	work_init(work_t *);
 void	work_free(work_t *);
 int	shutdown_or_close(int, int);
+int	so_keepalive_set(int);
 int	tcp_nodelay_set(int);
 int	nonblocking_set(int);
 int	nonblocking_clr(int);
@@ -1454,17 +1455,8 @@ do_work(work_t *work, int argc, char **argv)
 	}
 
 	/* Optionally set keepalives */
-	if (prefs.so_keepalive) {
-		int	keepalive = 1;
-
-		if (setsockopt(work->network_fd, SOL_SOCKET, SO_KEEPALIVE,
-			       &keepalive, sizeof(keepalive)) < 0) {
-			LOG_ERRNO(LOG_ERR, ("unable to set SO_KEEPALIVE on "
-					    "network socket"));
-
-			/* XXXrcd: We continue on failure */
-		}
-	}
+	if (prefs.so_keepalive)
+		so_keepalive_set(work->network_fd);/*(continue even if error)*/
 
 	/* Now we have credentials */
 	LOG(LOG_DEBUG, ("[%s] authenticated", work->credentials));
@@ -2004,17 +1996,8 @@ do_client(int argc, char **argv)
 	tcp_nodelay_set(work.network_fd); /*(continue even if error)*/
 
 	/* Optionally set keepalives */
-	if (prefs.so_keepalive) {
-		int	keepalive = 1;
-
-		if (setsockopt(work.network_fd, SOL_SOCKET, SO_KEEPALIVE,
-			       &keepalive, sizeof(keepalive)) < 0) {
-			LOG_ERRNO(LOG_ERR, ("unable to set SO_KEEPALIVE on "
-					    "network socket"));
-
-			/* XXXrcd: We continue on failure */
-		}
-	}
+	if (prefs.so_keepalive)
+		so_keepalive_set(work.network_fd); /*(continue even if error)*/
 
 	work.hostname = xstrdup(hostname);
 	work.service = xstrdup(service);
@@ -2056,6 +2039,18 @@ work_free(work_t *work)
 	free(work->service);
 	free(work->hostname);
 	free(work->sprinc);
+}
+
+int
+so_keepalive_set(int fd)
+{
+	int	flag = 1;
+
+	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &flag, sizeof(flag)) == 0)
+		return 0;
+
+	LOG_ERRNO(LOG_ERR, ("unable to set SO_KEEPALIVE on socket"));
+	return -1;
 }
 
 int
