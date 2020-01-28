@@ -2735,7 +2735,8 @@ knc_connect(knc_ctx ctx, const char *hostservice,
 
 	/* XXXrcd: Hell's Bells, the above needs to be fixed. */
 
-	knc_import_set_hb_service(ctx, host, service);
+	if (ctx->service == GSS_C_NO_NAME)
+		knc_import_set_hb_service(ctx, host, service);
 
 	fd = connect_host(ctx, host, port, opts);
 	if (fd == -1)
