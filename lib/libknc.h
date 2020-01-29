@@ -61,6 +61,7 @@ void		knc_ctx_close(knc_ctx);		/* deprecated */
 
 int		knc_get_opt(knc_ctx, unsigned);
 void		knc_set_opt(knc_ctx, unsigned, int);
+int		knc_set_optb(knc_ctx, unsigned, int);
 
 /*
  * These are the ``options''.  Some of them are KNC_SOCK or KNC_SO and some are

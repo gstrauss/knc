@@ -1146,14 +1146,15 @@ knc_get_opt(knc_ctx ctx, unsigned opt)
 	return -1;
 }
 
-void
-knc_set_opt(knc_ctx ctx, unsigned opt, int value)
+int
+knc_set_optb(knc_ctx ctx, unsigned opt, int value)
 {
 	int	rfd;
 	int	wfd;
+	int	opts_save = 0;
 
 	if (!ctx)
-		return;
+		return 0;
 
 	switch (opt) {
 	/* We handle all of the flag-options together: */
@@ -1163,11 +1164,13 @@ knc_set_opt(knc_ctx ctx, unsigned opt, int value)
 	case KNC_SOCK_CLOEXEC:
 	case KNC_SO_KEEPALIVE:
 		if (value) {
-			if (ctx->opts & opt) return;
+			if (ctx->opts & opt) return 1;
+			opts_save = ctx->opts;
 			ctx->opts |= opt;
 		}
 		else {
-			if (!(ctx->opts & opt)) return;
+			if (!(ctx->opts & opt)) return 1;
+			opts_save = ctx->opts;
 			ctx->opts &= ~opt;
 		}
 		break;
@@ -1193,9 +1196,18 @@ knc_set_opt(knc_ctx ctx, unsigned opt, int value)
 			rfd = ((struct fd_cookie *)ctx->netcookie)->rfd;
 			wfd = ((struct fd_cookie *)ctx->netcookie)->wfd;
 
-			socket_options(rfd, ctx->opts);
-			if (wfd != rfd)
-				socket_options(wfd, ctx->opts);
+			if (socket_options(rfd, ctx->opts) != 0) {
+				ctx->opts = opts_save;
+				return 0;
+			}
+			if (wfd != rfd) {
+				if (socket_options(wfd, ctx->opts) != 0) {
+					/* ctx->opts flags inconsistent if call
+					 * succeeded on rfd but not on wfd */
+					ctx->opts = opts_save;
+					return 0;
+				}
+			}
 		}
 		/* XXXrcd: should we do something with the local side?? */
 		break;
@@ -1204,15 +1216,32 @@ knc_set_opt(knc_ctx ctx, unsigned opt, int value)
 			rfd = ((struct fd_cookie *)ctx->netcookie)->rfd;
 			wfd = ((struct fd_cookie *)ctx->netcookie)->wfd;
 
-			so_option(rfd, SO_KEEPALIVE, value);
-			if (wfd != rfd)
-				so_option(wfd, SO_KEEPALIVE, value);
+			if (so_option(rfd, SO_KEEPALIVE, value) != 0) {
+				ctx->opts = opts_save;
+				return 0;
+			}
+			if (wfd != rfd) {
+				if (so_option(wfd, SO_KEEPALIVE, value) != 0) {
+					/* ctx->opts flags inconsistent if call
+					 * succeeded on rfd but not on wfd */
+					ctx->opts = opts_save;
+					return 0;
+				}
+			}
 		}
 		/* XXXrcd: should we do something with the local side?? */
 		break;
 	default:
 		break;
 	}
+
+	return 1;
+}
+
+void
+knc_set_opt(knc_ctx ctx, unsigned opt, int value)
+{
+    knc_set_optb(ctx, opt, value);
 }
 
 int
