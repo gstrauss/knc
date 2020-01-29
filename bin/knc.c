@@ -2006,29 +2006,21 @@ do_client(int argc, char **argv)
 		if (knc_error(ctx) != 0)
 			return report_ctx_err(ctx, "knc_give_net_fd()");
 
-		errno = 0;
-		knc_set_opt(ctx, KNC_SOCK_NONBLOCK, 1);
-		if (errno != 0)
+		if (!knc_set_optb(ctx, KNC_SOCK_NONBLOCK, 1))
 			return report_ctx_errno(ctx,
 			                        "unable to set O_NONBLOCK on "
 			                        "network socket");
 
-		errno = 0;
-		knc_set_opt(ctx, KNC_SOCK_CLOEXEC, 1);
-		if (errno != 0)
+		if (!knc_set_optb(ctx, KNC_SOCK_CLOEXEC, 1))
 			return report_ctx_errno(ctx,
 			                        "failed to set FD_CLOEXEC on "
 			                        "network socket");
 
-		if (prefs.so_keepalive) {
-			errno = 0;
-			knc_set_opt(ctx, KNC_SO_KEEPALIVE, 1);
-			if (errno != 0) {
-				LOG_ERRNO(LOG_ERR, ("failed to set SO_KEEPALIVE"
-						    " on network socket"));
-				/* XXXrcd: We continue on failure */
-			}
-		}
+		if (prefs.so_keepalive
+		    && !knc_set_optb(ctx, KNC_SO_KEEPALIVE, 1))
+			LOG_ERRNO(LOG_ERR, ("unable to set SO_KEEPALIVE on "
+					    "network socket"));
+			/* XXXrcd: We continue on failure */
 
 		if (prefs.sprinc) {
 			knc_import_set_service(ctx, prefs.sprinc, GSS_C_NO_OID);
@@ -2065,9 +2057,7 @@ do_client(int argc, char **argv)
 		if (knc_error(ctx) != 0)
 			return report_ctx_err(ctx, "knc_connect()");
 
-		errno = 0;
-		knc_set_opt(ctx, KNC_SOCK_NONBLOCK, 1);
-		if (errno != 0)
+		if (!knc_set_optb(ctx, KNC_SOCK_NONBLOCK, 1))
 			return report_ctx_errno(ctx,
 			                        "unable to set O_NONBLOCK on "
 			                        "network socket");
