@@ -1604,7 +1604,7 @@ do_work(work_t *work, int argc, char **argv)
 			work->local_in = STDOUT_FILENO;
 			work->local_out = STDIN_FILENO;
 		} else if (!launch_program(work, argc, argv))
-			exit(1);
+			return 0;
 	}
 
 	/* Use non-blocking local writes I/O */
@@ -1700,7 +1700,7 @@ launch_program(work_t *work, int argc, char **argv)
 		/* If we get here, the exec failed */
 
 		LOG_ERRNO(LOG_ERR, ("exec of %s failed", argv[0]));
-		exit(1);
+		_exit(1);
 	}
 
 	/* parent */
@@ -1725,7 +1725,7 @@ fork_and_do_work(work_t *work, int listener, int argc, char **argv)
 	} else if (pid == 0) {
 		/* child */
 		close(listener);
-		exit(!do_work(work, argc, argv));
+		_exit(!do_work(work, argc, argv));
 	}
 
 	LOG(LOG_DEBUG, ("parent returning to accept"));
@@ -1793,7 +1793,7 @@ fork_and_do_unix_socket(work_t *work, int listener)
 	} else if (pid == 0) {
 		/* child */
 		close(listener);
-		exit(!do_unix_socket(work));
+		_exit(!do_unix_socket(work));
 	}
 
 	LOG(LOG_DEBUG, ("parent returning to accept"));
