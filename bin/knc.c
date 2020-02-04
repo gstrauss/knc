@@ -1471,12 +1471,10 @@ emit_key_value(work_t * work, const char * const key,
 	 * own key:value pair.
 	 *
 	 * On the receiver, poor data handling may allow embedded NULs
-	 * to cause trouble.
-	 *
-	 * Disallow both.
+	 * to cause trouble, but since these are C-strings, NUL will truncate.
 	 */
-	if (strpbrk(value, "\n\000") != NULL) {
-		LOG(LOG_CRIT, ("embedded newline or NUL in value '%s' for key "
+	if (strchr(value, '\n') != NULL) {
+		LOG(LOG_CRIT, ("embedded newline in value '%s' for key "
 			       "'%s'.  connection terminated.", value, key));
 		return 0;
 	}
