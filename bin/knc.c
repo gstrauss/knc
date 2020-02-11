@@ -1603,11 +1603,6 @@ do_work(work_t *work, int argc, char **argv)
 
 	ret = move_data(work);
 
-	close(work->network_fd);
-	close(work->local_in);
-	close(work->local_out);
-	close(work->local_err);
-
 	/* reap and log status of program exec'd by launch_program()
 	 * if child has exited, else leave child to be inherited by init
 	 */
@@ -1723,7 +1718,6 @@ int
 do_unix_socket(work_t *work)
 {
 	int			fd;
-	int			ret;
 	struct sockaddr_un	pfun;
 
 	memset(&pfun, 0, sizeof(pfun));
@@ -1758,13 +1752,7 @@ do_unix_socket(work_t *work)
 
 	work->local_in = work->local_out = fd;
 
-	ret = do_work(work, 0, 0);
-
-	close(work->local_in);
-	close(work->local_out);
-	close(work->network_fd);
-
-	return ret;
+	return do_work(work, 0, 0);
 }
 
 int
@@ -2007,7 +1995,6 @@ do_listener(int listener, int argc, char **argv)
 
 		/* And now, as the parent, we no longer need this work
 		   structure or file descriptor */
-		close(fd);
 		work_free(work);
 		free(work);
 
@@ -2132,6 +2119,22 @@ work_free(work_t *work)
 
 	if (work->context != NULL)
 		gstd_close(work->context);
+	else if (work->network_fd != -1)
+		close(work->network_fd);
+
+	if (work->local_in != -1)
+		close(work->local_in);
+
+	if (work->local_out != -1 && work->local_out != work->local_in)
+		close(work->local_out);
+
+	if (work->local_err != -1)
+		close(work->local_err);
+
+	work->network_fd = -1;
+	work->local_in   = -1;
+	work->local_out  = -1;
+	work->local_err  = -1;
 }
 
 int
