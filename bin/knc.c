@@ -93,7 +93,6 @@ int	fork_and_do_unix_socket(work_t *, int);
 int	do_client(int, char **);
 int	send_creds(int, work_t *, const char *const, const char * const);
 int	emit_key_value(work_t *, const char * const, const char * const);
-int	putenv_knc_key_value(const char * const, const char * const);
 int	do_work(work_t *, int, char **);
 int	fork_and_do_work(work_t *, int, int, char **);
 int	move_local_to_network_buffer(work_t *);
@@ -1408,10 +1407,10 @@ send_creds(int local, work_t *work, const char *const key,
 	if (!value)
 		return 1;
 
-	if (local)
-		return emit_key_value(work, key, value);
+	if (local) /*(key+4 to skip KNC_ prefix on key)*/
+		return emit_key_value(work, key+4, value);
 
-	return putenv_knc_key_value(key, value);
+	return !setenv(key, value, 1);
 }
 
 int
@@ -1449,23 +1448,6 @@ emit_key_value(work_t * work, const char * const key,
 	return 1;
 }
 
-int
-putenv_knc_key_value(const char * const key, const char * const value)
-{
-	char	*p;
-
-	if ((p = malloc(strlen(key) + 1 + strlen(value) + 5)) == NULL) {
-		LOG(LOG_ERR, ("malloc failure during putenv_knc_key_value"));
-		return 0;
-	}
-
-	/* safe */
-	sprintf(p, "KNC_%s=%s", key, value);
-	putenv(p);
-
-	return 1;
-}
-
 void
 sockaddr_2str(work_t *work, const struct sockaddr *sa, socklen_t len)
 {
@@ -1483,6 +1465,31 @@ sockaddr_2str(work_t *work, const struct sockaddr *sa, socklen_t len)
 		work->network_addr[0] = '\0';
 		work->network_port[0] = '\0';
 	}
+}
+
+static int
+send_env(int local, work_t *work)
+{
+	/* send the credentials to our daemon side */
+
+	if (!(send_creds(local, work, "KNC_MECH", work->mech)		&&
+	      (strcmp(work->mech, "krb5") != 0			||
+	       send_creds(local, work, "KNC_CREDS", work->credentials))	&&
+	      send_creds(local, work, "KNC_EXPORT_NAME", work->export_name)&&
+	      (work->network_family != AF_INET			||
+	       send_creds(local, work, "KNC_REMOTE_IP", work->network_addr))&&
+	      (work->network_family != AF_INET6			||
+	       send_creds(local, work, "KNC_REMOTE_IP6", work->network_addr))&&
+	      send_creds(local, work, "KNC_REMOTE_ADDR", work->network_addr)&&
+	      send_creds(local, work, "KNC_REMOTE_PORT", work->network_port)&&
+	      send_creds(local, work, "KNC_VERSION", KNC_VERSION_STRING)&&
+	      send_creds(local, work, "END", NULL))) {
+		LOG(LOG_ERR, ("Failed to propagate creds.  "
+		              "connection terminated."));
+		return 0;
+	}
+
+	return 1;
 }
 
 int
@@ -1537,23 +1544,8 @@ do_work(work_t *work, int argc, char **argv)
 	local = !(prefs.sun_path == NULL);
 
 	/* send the credentials to our daemon side */
-
-	if (!(send_creds(local, work, "MECH", work->mech)		&&
-	      (strcmp(work->mech, "krb5") != 0			||
-	       send_creds(local, work, "CREDS", work->credentials))	&&
-	      send_creds(local, work, "EXPORT_NAME", work->export_name)	&&
-	      (work->network_family != AF_INET			||
-	       send_creds(local, work, "REMOTE_IP", work->network_addr))&&
-	      (work->network_family != AF_INET6			||
-	       send_creds(local, work, "REMOTE_IP6", work->network_addr))&&
-	      send_creds(local, work, "REMOTE_ADDR", work->network_addr)&&
-	      send_creds(local, work, "REMOTE_PORT", work->network_port)&&
-	      send_creds(local, work, "VERSION", KNC_VERSION_STRING)	&&
-	      send_creds(local, work, "END", NULL))) {
-		LOG(LOG_ERR, ("Failed to propagate creds.  connection "
-			      "terminated."));
+	if (local && !send_env(local, work))
 		return 0;
-	}
 
 	/* Handle the NON - Unix domain socket case */
 	if (!local) {
@@ -1620,6 +1612,12 @@ launch_program(work_t *work, int argc, char **argv)
 		close(prog_err[0]);
 		LOG(LOG_DEBUG, ("child process preparing to exec %s",
 				argv[0]));
+
+		if (!send_env(0, work)) {
+			close(prog_fds[1]);
+			close(prog_err[1]);
+			return 0;
+		}
 
 		if (dup2(prog_fds[1], STDIN_FILENO) < 0) {
 			LOG_ERRNO(LOG_ERR, ("STDIN_FILENO dup2 failed"));
