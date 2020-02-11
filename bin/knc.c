@@ -1873,7 +1873,7 @@ do_listener(int listener, int argc, char **argv)
 	int			 timeout = 60000; /* wake every 60s to reap */
 	time_t			 endtime = 0;
 	socklen_t		 client_len;
-	work_t			*work;
+	work_t			 work;
 	struct pollfd pfds[1];
 	pfds[0].fd = listener;
 	pfds[0].events = POLLIN;
@@ -1930,41 +1930,35 @@ do_listener(int listener, int argc, char **argv)
 			continue;
 		}
 
-		if ((work = (work_t *)malloc(sizeof(work_t))) == NULL) {
-			LOG(LOG_CRIT, ("malloc of work structure failed"));
-			return 0;
-		}
+		work_init(&work);
 
-		work_init(work);
-
-		sockaddr_2str(work, (struct sockaddr *)&sa, client_len);
+		sockaddr_2str(&work, (struct sockaddr *)&sa, client_len);
 		num_connections++;
 
 		LOG(LOG_INFO, ("Accepted connection from %s port %s",
-			       work->network_addr, work->network_port));
+			       work.network_addr, work.network_port));
 
-		work->network_fd = fd;
+		work.network_fd = fd;
 
 		if (prefs.sun_path != NULL) {
 			/* Connecting to a unix domain socket */
 			if (prefs.no_fork)
-				do_unix_socket(work);
+				do_unix_socket(&work);
 			else {
-				fork_and_do_unix_socket(work, listener);
+				fork_and_do_unix_socket(&work, listener);
 			}
 		} else {
 			/* execing a program */
 			if (prefs.no_fork)
-				do_work(work, argc, argv);
+				do_work(&work, argc, argv);
 			else {
-				fork_and_do_work(work, listener, argc, argv);
+				fork_and_do_work(&work, listener, argc, argv);
 			}
 		}
 
 		/* And now, as the parent, we no longer need this work
 		   structure or file descriptor */
-		work_free(work);
-		free(work);
+		work_free(&work);
 
 		/* Exit if we've processed the maximum number of connections */
 		if (prefs.max_connections &&
