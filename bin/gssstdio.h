@@ -52,7 +52,7 @@
 #ifndef _GSSSTDIO_H_
 #define _GSSSTDIO_H_
 
-#include <stdio.h>
+#include <sys/types.h>
 
 #if HAVE_GSSAPI_H
 #include <gssapi.h>
@@ -64,24 +64,8 @@
 #endif
 #endif
 
-struct gstd_tok {
-	gss_ctx_id_t	gstd_ctx;	/* current GSS Context */
-	gss_buffer_desc	gstd_inbuf;	/* outstanding read buffer */
-	int		gstd_inbufpos;	/* position in said buffer */
-	int		gstd_fd;	/* file descriptor for the stream */
-};
-
-ssize_t	 gstd_read(void *, char *, size_t);
-int	 gstd_close(void *);
-
-void	*gstd_accept(int, char **, char **, char **);
-void	*gstd_initiate(const char *, const char *, const char *, int);
-
-void	 gstd_release_context(void *);
-
 void gstd_error(int, int, const char *);
 
-ssize_t	 readn(int, void *, ssize_t);
 ssize_t	 writen(int, const void *, ssize_t);
 
 char *	gstd_get_display_name(gss_name_t);

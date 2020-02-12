@@ -55,17 +55,6 @@ typedef struct prefs_s {
 
 extern prefs_t prefs;
 
-/* Simple input/output buffering */
-typedef struct write_buffer_s {
-	char			in_valid;
-	char			out_valid;
-	int			out_pos;
-	size_t			in_len;
-	size_t			out_len;
-	char			in[GSTD_MAXPACKETCONTENTS];
-	char			out[2 * GSTD_MAXPACKETCONTENTS + 4];
-} write_buffer_t;
-
 
 /* Connection specific data */
 typedef struct work_s {
