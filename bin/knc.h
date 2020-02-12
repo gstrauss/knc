@@ -50,7 +50,6 @@ typedef struct prefs_s {
 	char *			prog;		/* program to exec */
 	char *			syslog_ident;	/* syslog ident to use */
 	int			network_fd;	/* wrap around existing fd */
-	struct sockaddr_in	addr;
 } prefs_t;
 
 extern prefs_t prefs;

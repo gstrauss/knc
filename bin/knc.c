@@ -511,9 +511,6 @@ main(int argc, char **argv)
 		}
 	}
 
-	/* Initialize address */
-	prefs.addr.sin_addr.s_addr = htonl(INADDR_ANY);
-
 	/* If we've specified a bind address ... */
 	if (prefs.bindaddr != NULL) {
 		if (!prefs.is_listener) {
@@ -525,9 +522,6 @@ main(int argc, char **argv)
 			fprintf(stderr, "-a doesn't work in inetd mode\n");
 			exit(1);
 		}
-
-		if (!do_bind_addr(prefs.bindaddr, &prefs.addr))
-			exit(1);
 	}
 
 	/* And now the meat of the app */
@@ -636,6 +630,17 @@ setup_listener(unsigned short int port)
 {
 	int	fd;
 	int	opt;
+	struct sockaddr_in addr;
+
+	/* Initialize address */
+	addr.sin_family = AF_INET;
+	addr.sin_port = port;
+	addr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	if (prefs.bindaddr != NULL) {
+		if (!do_bind_addr(prefs.bindaddr, &addr))
+			return -1;
+	}
 
 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		LOG_ERRNO(LOG_ERR, ("failed to create socket"));
@@ -657,12 +662,7 @@ setup_listener(unsigned short int port)
 		return -1;
 	}
 
-	/* Our prefs.addr address already has the the s_addr parameter
-	   set up */
-	prefs.addr.sin_family = AF_INET;
-	prefs.addr.sin_port = port;
-
-	if (bind(fd, (struct sockaddr *)&prefs.addr, sizeof(prefs.addr)) < 0) {
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		LOG_ERRNO(LOG_ERR, ("failed to bind listening socket"));
 		close(fd);
 		return -1;
