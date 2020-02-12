@@ -1492,6 +1492,33 @@ send_env(int local, work_t *work)
 	return 1;
 }
 
+static int
+init_ctx_network_fd(knc_ctx ctx, int *network_fd)
+{
+	knc_give_net_fd(ctx, *network_fd);
+	if (knc_error(ctx) != 0)
+		return report_ctx_err(ctx, "knc_give_net_fd()");
+	*network_fd = -1;
+
+	if (!knc_set_optb(ctx, KNC_SOCK_NONBLOCK, 1))
+		return report_ctx_errno(ctx,
+		                        "unable to set O_NONBLOCK on "
+		                        "network socket");
+
+	if (!knc_set_optb(ctx, KNC_SOCK_CLOEXEC, 1))
+		return report_ctx_errno(ctx,
+		                        "failed to set FD_CLOEXEC on "
+		                        "network socket");
+
+	if (prefs.so_keepalive
+	    && !knc_set_optb(ctx, KNC_SO_KEEPALIVE, 1))
+		LOG_ERRNO(LOG_ERR, ("unable to set SO_KEEPALIVE on "
+				    "network socket"));
+		/* XXXrcd: We continue on failure */
+
+	return 1;
+}
+
 int
 do_work(work_t *work, int argc, char **argv)
 {
@@ -1994,25 +2021,8 @@ do_client(int argc, char **argv)
 			                      "network socket conflicts with "
 			                      "stdin or stdout");
 
-		knc_give_net_fd(ctx, prefs.network_fd);
-		if (knc_error(ctx) != 0)
-			return report_ctx_err(ctx, "knc_give_net_fd()");
-
-		if (!knc_set_optb(ctx, KNC_SOCK_NONBLOCK, 1))
-			return report_ctx_errno(ctx,
-			                        "unable to set O_NONBLOCK on "
-			                        "network socket");
-
-		if (!knc_set_optb(ctx, KNC_SOCK_CLOEXEC, 1))
-			return report_ctx_errno(ctx,
-			                        "failed to set FD_CLOEXEC on "
-			                        "network socket");
-
-		if (prefs.so_keepalive
-		    && !knc_set_optb(ctx, KNC_SO_KEEPALIVE, 1))
-			LOG_ERRNO(LOG_ERR, ("unable to set SO_KEEPALIVE on "
-					    "network socket"));
-			/* XXXrcd: We continue on failure */
+		if (!init_ctx_network_fd(ctx, &prefs.network_fd))
+			return report_ctx_err(ctx, NULL);
 
 		if (prefs.sprinc) {
 			knc_import_set_service(ctx, prefs.sprinc, GSS_C_NO_OID);
