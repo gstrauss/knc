@@ -84,6 +84,10 @@ void gstd_error(int, int, const char *);
 ssize_t	 readn(int, void *, ssize_t);
 ssize_t	 writen(int, const void *, ssize_t);
 
+char *	gstd_get_display_name(gss_name_t);
+char *	gstd_get_export_name(gss_name_t);
+char *	gstd_get_mech(gss_OID);
+
 #define GSTD_MAXPACKETCONTENTS	65536	/* max contents of a single payload */
 
 /* mmm, macros. */

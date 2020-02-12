@@ -81,15 +81,6 @@ typedef struct work_s {
 
 	/* stderr of local side */
 	int			local_err;
-
-	/* Write buffers */
-	write_buffer_t		local_buffer;
-	write_buffer_t		network_buffer;
-
-	char *			credentials;
-	char *			export_name;
-	char *			mech;
-	void *			context;
 } work_t;
 
 const char *vlog(const char *, ...);

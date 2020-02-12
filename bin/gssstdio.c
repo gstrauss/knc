@@ -95,7 +95,7 @@ static int	gstd_errstring(char **, int);
 		(x)->gstd_fd  = (z);					\
 	} while (0)
 
-static char *
+char *
 gstd_get_display_name(gss_name_t client)
 {
 	OM_uint32	maj;
@@ -120,7 +120,7 @@ gstd_get_display_name(gss_name_t client)
 	return ret;
 }
 
-static char *
+char *
 gstd_get_export_name(gss_name_t client)
 {
 	OM_uint32	maj;
@@ -155,7 +155,7 @@ gstd_get_export_name(gss_name_t client)
 
 #define KNC_KRB5_MECH_OID "\052\206\110\206\367\022\001\002\002"
 
-static char *
+char *
 gstd_get_mech(gss_OID mech_oid)
 {
 #ifdef HAVE_GSS_OID_TO_STR

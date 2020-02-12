@@ -81,7 +81,7 @@ int	getport(const char *, const char *);
 int	sleep_reap(void);
 char *	xstrdup(const char *);
 void	parse_opt(const char *, const char *);
-int	launch_program(work_t *, int, char **);
+int	launch_program(work_t *, knc_ctx, int, char **);
 int	prep_inetd(void);
 int	do_inetd(int, char **);
 int	do_inetd_wait(int, char **);
@@ -1468,14 +1468,22 @@ sockaddr_2str(work_t *work, const struct sockaddr *sa, socklen_t len)
 }
 
 static int
-send_env(int local, work_t *work)
+send_env(int local, work_t *work, knc_ctx ctx)
 {
+	gss_name_t client = knc_get_client(ctx);
+	char *display_creds = gstd_get_display_name(client);
+	char *export_name = gstd_get_export_name(client);
+	char *mech = gstd_get_mech(knc_get_ret_mech(ctx));
+	int ret = 1;
+
+	LOG(LOG_DEBUG, ("[%s] authenticated", display_creds));
+
 	/* send the credentials to our daemon side */
 
-	if (!(send_creds(local, work, "KNC_MECH", work->mech)		&&
-	      (strcmp(work->mech, "krb5") != 0			||
-	       send_creds(local, work, "KNC_CREDS", work->credentials))	&&
-	      send_creds(local, work, "KNC_EXPORT_NAME", work->export_name)&&
+	if (!(send_creds(local, work, "KNC_MECH", mech)			&&
+	      (strcmp(mech, "krb5") != 0			||
+	       send_creds(local, work, "KNC_CREDS", display_creds))	&&
+	      send_creds(local, work, "KNC_EXPORT_NAME", export_name)	&&
 	      (work->network_family != AF_INET			||
 	       send_creds(local, work, "KNC_REMOTE_IP", work->network_addr))&&
 	      (work->network_family != AF_INET6			||
@@ -1486,10 +1494,14 @@ send_env(int local, work_t *work)
 	      send_creds(local, work, "END", NULL))) {
 		LOG(LOG_ERR, ("Failed to propagate creds.  "
 		              "connection terminated."));
-		return 0;
+		ret = 0;
 	}
 
-	return 1;
+	free(display_creds);
+	free(export_name);
+	free(mech);
+
+	return ret;
 }
 
 static int
@@ -1522,11 +1534,23 @@ init_ctx_network_fd(knc_ctx ctx, int *network_fd)
 int
 do_work(work_t *work, int argc, char **argv)
 {
+	knc_ctx		ctx = knc_ctx_init();
 	int		ret;
-	struct linger	l;
 	int		local = 0;
+	struct linger	l;
 
-	tcp_nodelay_set(work->network_fd); /*(continue even if error)*/
+	if (ctx == NULL) {
+		LOG_ERRNO(LOG_ERR, ("knc_connect(): ENOMEM"));
+		return 0;
+	}
+
+	knc_set_debug(ctx, 0);
+	knc_set_debug_prefix(ctx, "knc-server");
+
+	if (!init_ctx_network_fd(ctx, &work->network_fd))
+		return report_ctx_err(ctx, NULL);
+
+	knc_accept(ctx);
 
 	/*
 	 * We now have a socket (network_fd) and soon, a local descriptor --
@@ -1536,61 +1560,52 @@ do_work(work_t *work, int argc, char **argv)
 	 * We must establish what the remote end's credentials are, and
 	 * begin ferrying data to and fro.
 	 */
-	if ((work->context = gstd_accept(work->network_fd,
-					 &work->credentials,
-					 &work->export_name,
-					 &work->mech)) == NULL) {
-		LOG(LOG_ERR, ("handshake with peer failed"));
-		return 0;
-	}
+	knc_authenticate(ctx);
+	if (knc_error(ctx) != 0)
+		return report_ctx_err(ctx, "knc_authenticate()");
 
 	/* Ensure all messages are sent before close */
 	l.l_onoff = 1;
 	l.l_linger = 10;
-	if (setsockopt(work->network_fd, SOL_SOCKET, SO_LINGER,
+	if (setsockopt(knc_get_net_rfd(ctx), SOL_SOCKET, SO_LINGER,
 		       &l, sizeof(l)) < 0) {
-		LOG_ERRNO(LOG_ERR, ("unable to set SO_LINGER on network"
-				    " socket"));
-		return 0;
+		return report_ctx_errno(ctx, "unable to set SO_LINGER on "
+		                             "network socket");
 	}
-
-	/* Use non-blocking network I/O */
-	if (nonblocking_set(work->network_fd) < 0) {
-		LOG_ERRNO(LOG_ERR, ("unable to set O_NONBLOCK on network"
-				    " socket"));
-		return 0;
-	}
-
-	/* Optionally set keepalives */
-	if (prefs.so_keepalive)
-		so_keepalive_set(work->network_fd);/*(continue even if error)*/
 
 	/* Now we have credentials */
-	LOG(LOG_DEBUG, ("[%s] authenticated", work->credentials));
 
 	local = !(prefs.sun_path == NULL);
 
 	/* send the credentials to our daemon side */
-	if (local && !send_env(local, work))
-		return 0;
+	if (local && !send_env(local, work, ctx))
+		return report_ctx_err(ctx, NULL);
 
 	/* Handle the NON - Unix domain socket case */
 	if (!local) {
 		if (argc == 0) {
+			if (LOG_DEBUG <= prefs.debug_level) {
+				gss_name_t client = knc_get_client(ctx);
+				char *creds = gstd_get_display_name(client);
+				LOG(LOG_DEBUG, ("[%s] authenticated", creds));
+				free(creds);
+			}
 			work->local_in = STDOUT_FILENO;
 			work->local_out = STDIN_FILENO;
-		} else if (!launch_program(work, argc, argv))
-			return 0;
+		} else if (!launch_program(work, ctx, argc, argv))
+			return report_ctx_err(ctx, NULL);
 	}
 
-	/* Use non-blocking local writes I/O */
-	if (nonblocking_set(work->local_out) < 0) {
-		LOG_ERRNO(LOG_ERR, ("unable to set O_NONBLOCK on local"
-				    " write socket"));
-		return 0;
-	}
+	nonblocking_set(work->local_in);
+	nonblocking_set(work->local_out);
 
-	ret = move_data(work);
+	knc_give_local_fds(ctx, work->local_in, work->local_out);
+	if (knc_error(ctx) != 0)
+		return report_ctx_err(ctx, "knc_set_local_fds()");
+	work->local_in = -1;
+	work->local_out = -1;
+
+	ret = move_data_ctx(ctx);
 
 	/* reap and log status of program exec'd by launch_program()
 	 * if child has exited, else leave child to be inherited by init
@@ -1602,7 +1617,7 @@ do_work(work_t *work, int argc, char **argv)
 }
 
 int
-launch_program(work_t *work, int argc, char **argv)
+launch_program(work_t *work, knc_ctx ctx, int argc, char **argv)
 {
 	pid_t	pid;
 	int	prog_fds[2];
@@ -1634,13 +1649,30 @@ launch_program(work_t *work, int argc, char **argv)
 	if (pid == 0) {
 		/* child */
 
-		close(work->network_fd);
+		close(knc_get_net_rfd(ctx));
 		close(prog_fds[0]);
+		/* handle stderr separately, in a forked child
+		 * (handle here to avoid num_children count in parent)
+		 * (NB: this gives a child to exec'd program)
+		 * (Were this done in parent, then double prefs.num_children
+		 *  at config time (startup) if connections launch_program())
+		 */
+		if (fork() == 0) {
+			close(prog_fds[0]);
+			close(prog_fds[1]);
+			close(prog_err[1]);
+			work->local_err = prog_err[0];
+			nonblocking_clr(work->local_err);
+			do {
+				write_local_err(work);
+			} while (work->local_err != -1);
+			_exit(0);
+		}
 		close(prog_err[0]);
 		LOG(LOG_DEBUG, ("child process preparing to exec %s",
 				argv[0]));
 
-		if (!send_env(0, work)) {
+		if (!send_env(0, work, ctx)) {
 			close(prog_fds[1]);
 			close(prog_err[1]);
 			return 0;
@@ -1683,9 +1715,10 @@ launch_program(work_t *work, int argc, char **argv)
 	/* parent */
 
 	close(prog_fds[1]);
+	close(prog_err[0]);
 	close(prog_err[1]);
 	work->local_out = work->local_in = prog_fds[0];
-	work->local_err = prog_err[0];
+
 	return 1;
 }
 
@@ -2094,11 +2127,7 @@ void
 work_free(work_t *work)
 {
 
-	free(work->credentials);
-
-	if (work->context != NULL)
-		gstd_close(work->context);
-	else if (work->network_fd != -1)
+	if (work->network_fd != -1)
 		close(work->network_fd);
 
 	if (work->local_in != -1)
